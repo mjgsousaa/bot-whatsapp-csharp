@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\BotZapIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Selenium.WebDriver" Version="4.40.0" />
+    <PackageReference Include="Selenium.WebDriver.ChromeDriver" Version="144.0.7559.13300" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\logoBotZapAI.png" />
+    <Resource Include="Assets\logoCerta.ico" />
+    <Resource Include="Assets\BotZapIcon.ico" />
+    <Resource Include="Assets\SidebarLogo.png" />
+  </ItemGroup>
+
+</Project>

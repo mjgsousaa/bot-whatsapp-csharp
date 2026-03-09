@@ -1,0 +1,26 @@
+TERMOS DE USO E ISENÇÃO DE RESPONSABILIDADE - BOTZAP AI
+
+1. Natureza do Software
+O BotZap AI é uma ferramenta de automação para WhatsApp desenvolvida para auxiliar no atendimento e marketing. O software simula a interação humana para realizar tarefas repetitivas.
+
+2. Riscos de Banimento
+O uso de automação no WhatsApp viola os Termos de Serviço da Meta/WhatsApp em certas circunstâncias. Embora o BotZap AI utilize técnicas avançadas de "Stealth" (simulação humana, delays randômicos), NÃO HÁ GARANTIA DE 100% CONTRA BANIMENTOS. 
+O USUÁRIO ASSUME TOTAL RESPONSABILIDADE PELO RISCO DE PERDA DO NÚMERO.
+Recomendamos:
+- Não utilizar em números principais/pessoais.
+- Aqueça chips novos antes de utilizar automação pesada.
+- Respeite os limites de envio e intervalos.
+
+3. Isenção de Responsabilidade
+O desenvolvedor deste software não se responsabiliza por:
+- Bloqueios, banimentos ou suspensões de contas do WhatsApp.
+- Perda de dados, mensagens ou contatos.
+- Uso indevido da ferramenta para SPAM ou atividades ilegais.
+
+4. Propriedade Intelectual
+A licença de uso é concedida de forma não exclusiva e intransferível. A engenharia reversa, descompilação ou modificação do código sem autorização é proibida.
+
+5. Aceite
+Ao utilizar este software, você declara que leu, compreendeu e concorda com todos os termos acima.
+
+Data da última atualização: Fevereiro/2026
