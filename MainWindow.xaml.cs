@@ -328,7 +328,7 @@ namespace BotWhatsappCSharp
                     
                     await Task.Run(() => 
                     {
-                        _whatsappService.ProcessarMensagensNaoLidas((mensagemRecebida, audioData) =>
+                        _whatsappService.ProcessarMensagensNaoLidas((numeroTelefone, mensagemRecebida, audioData) =>
                         {
                             try
                             {
@@ -342,18 +342,19 @@ namespace BotWhatsappCSharp
 
                                 if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
 
-                                AddLog($"Mensagem recebida: {mensagemRecebida}");
+                                AddLog($"[{numeroTelefone}] Mensagem: {mensagemRecebida}");
                                 
                                 // 0. Verifica se é pedido de atendente
                                 string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor", "falar com pessoa", "human" };
                                 if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
                                 {
-                                    AddLog("Pedido de atendente detectado!");
+                                    AddLog($"Pedido de atendente detectado de {numeroTelefone}!");
                                     Application.Current.Dispatcher.Invoke(() => {
-                                        if (!ChamadosAbertos.Any(c => c.UltimaMensagem == mensagemRecebida)) {
+                                        if (!ChamadosAbertos.Any(c => c.Numero == numeroTelefone)) {
                                             ChamadosAbertos.Add(new ChamadoModel { 
-                                                Numero = "Cliente", 
-                                                UltimaMensagem = mensagemRecebida 
+                                                Numero = numeroTelefone, 
+                                                UltimaMensagem = mensagemRecebida,
+                                                Horario = DateTime.Now
                                             });
                                             TemNovoChamado = true;
                                         }
@@ -361,14 +362,17 @@ namespace BotWhatsappCSharp
                                     return ("Um atendente humano foi notificado e logo falará com você. Aguarde um momento.", "");
                                 }
 
-                                // 1. Verifica Gatilhos (Melhorado para precisão)
+                                // 1. Verifica Gatilhos (Melhorado para precisão e suporte a palavras-chave)
                                 string msgLimpa = mensagemRecebida.Trim().ToLower();
                                 var gatilho = Gatilhos.FirstOrDefault(g => 
                                 {
                                     string cmd = g.Comando.Trim().ToLower();
-                                    // Verifica se a mensagem começa com o comando ou é exatamente o comando
-                                    // Isso evita que "oi" dentro de "noite" dispare o gatilho
-                                    return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
+                                    // Se o comando começar com '/', exige correspondência exata no início
+                                    if (cmd.StartsWith("/")) {
+                                        return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
+                                    }
+                                    // Caso contrário, trata como palavra-chave (contém a palavra)
+                                    return msgLimpa.Contains(cmd);
                                 });
                                 
                                 if (gatilho != null)
@@ -583,8 +587,7 @@ namespace BotWhatsappCSharp
 
             if (!string.IsNullOrEmpty(cmd) && !string.IsNullOrEmpty(resp))
             {
-                if (!cmd.StartsWith("/")) cmd = "/" + cmd;
-
+                // Removida a adição automática de '/' para permitir palavras-chave livres
                 Gatilhos.Add(new GatilhoModel { 
                     Comando = cmd, 
                     Resposta = resp, 

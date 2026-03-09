@@ -7,31 +7,31 @@
     
     <Window.Resources>
         <!-- MODERN SAAS PALETTE (Clean Light) -->
-        <SolidColorBrush x:Key="BgApp" Color="#F0F2F5"/> <!-- Cool Gray Background -->
-        <SolidColorBrush x:Key="BgCard" Color="#FFFFFF"/> <!-- Pure White Cards -->
-        <SolidColorBrush x:Key="BrandPrimary" Color="#0078D7"/> <!-- Windows Blue -->
-        <SolidColorBrush x:Key="TextDark" Color="#1F2937"/> <!-- Almost Black -->
-        <SolidColorBrush x:Key="TextGray" Color="#6B7280"/> <!-- Gray 500 -->
-        <SolidColorBrush x:Key="SuccessGreen" Color="#10B981"/> <!-- Emerald Green -->
-        <SolidColorBrush x:Key="DangerRed" Color="#EF4444"/> <!-- Red 500 -->
-        <SolidColorBrush x:Key="BrandYellow" Color="#F59E0B"/> <!-- Amber 500 -->
-        <SolidColorBrush x:Key="BorderColor" Color="#E5E7EB"/> <!-- Gray 200 -->
-        <SolidColorBrush x:Key="TextBlack" Color="#1F2937"/> 
+        <SolidColorBrush x:Key="BgApp" Color="#F3F4F6"/> <!-- Light Gray 100 -->
+        <SolidColorBrush x:Key="BgCard" Color="#FFFFFF"/> <!-- Pure White -->
+        <SolidColorBrush x:Key="BrandPrimary" Color="#2563EB"/> <!-- Blue 600 -->
+        <SolidColorBrush x:Key="TextDark" Color="#111827"/> <!-- Gray 900 -->
+        <SolidColorBrush x:Key="TextGray" Color="#4B5563"/> <!-- Gray 600 -->
+        <SolidColorBrush x:Key="SuccessGreen" Color="#059669"/> <!-- Emerald 600 -->
+        <SolidColorBrush x:Key="DangerRed" Color="#DC2626"/> <!-- Red 600 -->
+        <SolidColorBrush x:Key="BrandYellow" Color="#D97706"/> <!-- Amber 600 -->
+        <SolidColorBrush x:Key="BorderColor" Color="#D1D5DB"/> <!-- Gray 300 -->
+        <SolidColorBrush x:Key="TextBlack" Color="#000000"/> 
 
         <!-- Sidebar Button Style -->
         <Style x:Key="NavBtnStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource TextGray}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="20,12"/>
-            <Setter Property="Margin" Value="0,2"/>
+            <Setter Property="Padding" Value="24,14"/>
+            <Setter Property="Margin" Value="8,4"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
                         </Border>
                     </ControlTemplate>
@@ -39,8 +39,8 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#E5E7EB"/> <!-- Light Hover -->
-                    <Setter Property="Foreground" Value="{StaticResource TextDark}"/>
+                    <Setter Property="Background" Value="#F3F4F6"/> 
+                    <Setter Property="Foreground" Value="{StaticResource BrandPrimary}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -114,30 +114,43 @@
 
         <!-- Sidebar -->
         <Border Grid.Column="0" Background="#FFFFFF" BorderBrush="{StaticResource BorderColor}" BorderThickness="0,0,1,0">
-            <StackPanel Margin="16,30,16,20">
-                <!-- Branding -->
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,40">
-                    <Image Source="pack://application:,,,/Assets/SidebarLogo.png" Height="45" Stretch="Uniform"/>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <StackPanel Grid.Row="0" Margin="0,40,0,40">
+                    <Image Source="pack://application:,,,/Assets/SidebarLogo.png" Height="50" Stretch="Uniform"/>
+                    <TextBlock Text="PAINEL DE CONTROLE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextGray}" HorizontalAlignment="Center" Margin="0,10,0,0" Opacity="0.7"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1">
+                    <Button x:Name="BtnNavConnect" Content="🔌  Conexão" Style="{StaticResource NavBtnStyle}" Click="NavConnect_Click"/>
+                    <Button x:Name="BtnNavAI" Content="🤖  Inteligência Artificial" Style="{StaticResource NavBtnStyle}" Click="NavAI_Click"/>
+                    <Button x:Name="BtnNavTickets" Content="🎧  Atendimento Humano" Style="{StaticResource NavBtnStyle}" Click="NavTickets_Click">
+                        <Button.Resources>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavBtnStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TemNovoChamado}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource BrandYellow}"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    <Button x:Name="BtnNavBulk" Content="🚀  Disparo em Massa" Style="{StaticResource NavBtnStyle}" Click="NavBulk_Click"/>
+                    <Button x:Name="BtnNavTriggers" Content="⚡  Gatilhos Rápidos" Style="{StaticResource NavBtnStyle}" Click="NavTriggers_Click"/>
                 </StackPanel>
                 
-                <Button x:Name="BtnNavConnect" Content="🔗  Conexão" Style="{StaticResource NavBtnStyle}" Click="NavConnect_Click"/>
-                <Button x:Name="BtnNavAI" Content="🧠  Inteligência Artificial" Style="{StaticResource NavBtnStyle}" Click="NavAI_Click"/>
-                <Button x:Name="BtnNavTickets" Content="📟  Chamados (Suporte)" Style="{StaticResource NavBtnStyle}" Click="NavTickets_Click">
-                    <Button.Resources>
-                        <Style TargetType="Button" BasedOn="{StaticResource NavBtnStyle}">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding TemNovoChamado}" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource BrandYellow}"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Button.Resources>
-                </Button>
-                <Button x:Name="BtnNavBulk" Content="📢  Disparo em Massa" Style="{StaticResource NavBtnStyle}" Click="NavBulk_Click"/>
-                <Button x:Name="BtnNavTriggers" Content="⚡  Gatilhos Rápidos" Style="{StaticResource NavBtnStyle}" Click="NavTriggers_Click"/>
-                
-                <TextBlock Text="V 5.0 Stable" Foreground="{StaticResource TextGray}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Bottom" Height="20" Opacity="0.5"/>
-            </StackPanel>
+                <StackPanel Grid.Row="2" Margin="20" Opacity="0.6">
+                    <Separator Background="{StaticResource BorderColor}" Margin="0,0,0,10"/>
+                    <TextBlock Text="BotZap AI Premium" FontWeight="Bold" FontSize="12" Foreground="{StaticResource TextDark}"/>
+                    <TextBlock Text="Versão 5.1 Estável" FontSize="11" Foreground="{StaticResource TextGray}"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- Content Area -->
@@ -173,30 +186,70 @@
 
             <!-- View: Chamados (Tickets) -->
             <StackPanel x:Name="ViewTickets" Visibility="Collapsed">
-                <TextBlock Text="Fila de Atendimento Humano" FontSize="26" FontWeight="Bold" Foreground="{StaticResource TextDark}" Margin="0,0,0,5"/>
-                <TextBlock Text="Contatos que solicitaram falar com um atendente." FontSize="14" Foreground="{StaticResource TextGray}" Margin="0,0,0,30"/>
+                <Grid Margin="0,0,0,30">
+                    <StackPanel>
+                        <TextBlock Text="Atendimento Humano" FontSize="28" FontWeight="Bold" Foreground="{StaticResource TextDark}"/>
+                        <TextBlock Text="Fila de contatos aguardando sua intervenção manual." FontSize="14" Foreground="{StaticResource TextGray}"/>
+                    </StackPanel>
+                    <Border Background="{StaticResource BrandYellow}" HorizontalAlignment="Right" VerticalAlignment="Center" Padding="12,6" CornerRadius="15">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="●" Foreground="White" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="EM ESPERA" Foreground="White" FontWeight="Bold" FontSize="11" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
                 
                 <Border Style="{StaticResource CardStyle}">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Text="Aguardando Intervenção" FontWeight="SemiBold" Margin="0,0,0,15"/>
-                        <ListView x:Name="TicketsList" ItemsSource="{Binding ChamadosAbertos}" Height="500" BorderThickness="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        
+                        <ListView x:Name="TicketsList" ItemsSource="{Binding ChamadosAbertos}" Height="500" BorderThickness="0" Background="Transparent">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Padding" Value="0,10"/>
+                                    <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+                                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                </Style>
+                            </ListView.ItemContainerStyle>
                             <ListView.View>
                                 <GridView>
-                                    <GridViewColumn Header="WhatsApp" Width="150" DisplayMemberBinding="{Binding Numero}"/>
-                                    <GridViewColumn Header="Nome/Status" Width="150" DisplayMemberBinding="{Binding Nome}"/>
-                                    <GridViewColumn Header="Última Mensagem" Width="400" DisplayMemberBinding="{Binding UltimaMensagem}"/>
-                                    <GridViewColumn Header="Horário" Width="120" DisplayMemberBinding="{Binding Horario, StringFormat={}{0:HH:mm:ss}}"/>
-                                    <GridViewColumn Header="Ação" Width="100">
+                                    <GridViewColumn Header="NÚMERO / CONTATO" Width="180">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
-                                                <Button Content="Resolvido" Click="ResolveTicket_Click" Padding="5,2" Background="{StaticResource SuccessGreen}" Foreground="White" BorderThickness="0"/>
+                                                <TextBlock Text="{Binding Numero}" FontWeight="Bold" Foreground="{StaticResource BrandPrimary}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="MENSAGEM" Width="420">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding UltimaMensagem}" TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextDark}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="HORÁRIO" Width="100">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Horario, StringFormat={}{0:HH:mm}}" Foreground="{StaticResource TextGray}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="AÇÕES" Width="120">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="CONCLUIR" Click="ResolveTicket_Click" 
+                                                        Style="{StaticResource PrimaryBtn}" Background="{StaticResource SuccessGreen}"
+                                                        FontSize="10" Padding="10,4" Height="30"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
                                 </GridView>
                             </ListView.View>
                         </ListView>
-                    </DockPanel>
+                    </Grid>
                 </Border>
             </StackPanel>
 
@@ -341,8 +394,8 @@
 
             <!-- View: Gatilhos (Fixed) -->
             <StackPanel x:Name="ViewTriggers" Visibility="Collapsed">
-                 <TextBlock Text="Gatilhos Rápidos" FontSize="26" FontWeight="Bold" Foreground="{StaticResource TextDark}" Margin="0,0,0,5"/>
-                 <TextBlock Text="Respostas exatas para comandos específicos (ex: /preço)." FontSize="14" Foreground="{StaticResource TextGray}" Margin="0,0,0,30"/>
+                 <TextBlock Text="Gatilhos e Automação" FontSize="28" FontWeight="Bold" Foreground="{StaticResource TextDark}" Margin="0,0,0,5"/>
+                 <TextBlock Text="Configure respostas automáticas. Use '/' para comandos exatos ou apenas palavras para palavras-chave." FontSize="14" Foreground="{StaticResource TextGray}" Margin="0,0,0,30"/>
                  
                  <Border Style="{StaticResource CardStyle}">
                     <Grid>
@@ -363,8 +416,8 @@
                             </Grid.ColumnDefinitions>
                             
                             <StackPanel Grid.Column="0">
-                                <TextBlock Text="Comando" FontWeight="SemiBold" Foreground="{StaticResource TextGray}" FontSize="12" Margin="0,0,0,5"/>
-                                <TextBox x:Name="TriggerCmdInput" Style="{StaticResource ModernInput}" Tag="ex: /pix"/>
+                                <TextBlock Text="Gatilho (Comando ou Palavra)" FontWeight="SemiBold" Foreground="{StaticResource TextGray}" FontSize="12" Margin="0,0,0,5"/>
+                                <TextBox x:Name="TriggerCmdInput" Style="{StaticResource ModernInput}" ToolTip="Ex: /ajuda ou apenas 'preço'"/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2">

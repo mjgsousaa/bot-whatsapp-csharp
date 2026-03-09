@@ -168,7 +168,7 @@ namespace BotWhatsappCSharp.Services
             }
         }
 
-        public void ProcessarMensagensNaoLidas(Func<string, byte[], (string Resposta, string Anexo)> gerarResposta, Action<string> onLog = null)
+        public void ProcessarMensagensNaoLidas(Func<string, string, byte[], (string Resposta, string Anexo)> gerarResposta, Action<string> onLog = null)
         {
             try
             {
@@ -203,6 +203,29 @@ namespace BotWhatsappCSharp.Services
                         Thread.Sleep(500);
                         chatRow.Click();
                         Thread.Sleep(1500); 
+
+                        // Extrair número do telefone
+                        string numeroTelefone = "Desconhecido";
+                        try {
+                            var js = (IJavaScriptExecutor)_driver;
+                            string script = @"
+                                function getPhone() {
+                                    const header = document.querySelector('header');
+                                    if (!header) return 'Desconhecido';
+                                    const titleEl = header.querySelector('[title]');
+                                    if (titleEl) {
+                                        const title = titleEl.getAttribute('title');
+                                        if (title && /^\+?[\d\s\-()]+$/.test(title)) return title;
+                                    }
+                                    const spans = header.querySelectorAll('span');
+                                    for (let s of spans) {
+                                        if (/^\+?[\d\s\-()]{8,}$/.test(s.innerText)) return s.innerText;
+                                    }
+                                    return 'Contato Salvo';
+                                }
+                                return getPhone();";
+                            numeroTelefone = js.ExecuteScript(script).ToString();
+                        } catch { }
 
                         var msgs = _driver.FindElements(By.XPath("//div[contains(@class, 'message-in')]"));
                         if (msgs.Count > 0)
@@ -265,7 +288,7 @@ namespace BotWhatsappCSharp.Services
                                     onLog?.Invoke($"Lido: {texto.Substring(0, Math.Min(20, texto.Length))}...");
                                 }
 
-                                var (resposta, anexo) = gerarResposta(texto, audioData);
+                                var (resposta, anexo) = gerarResposta(numeroTelefone, texto, audioData);
                                 
                                 if (!string.IsNullOrWhiteSpace(resposta))
                                 {
