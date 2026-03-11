@@ -1,0 +1,56 @@
+        private void SelectView(string viewName)
+        {
+            // Reset Buttons (SaaS Style)
+            BtnNavConnect.Background = Brushes.Transparent; BtnNavConnect.Foreground = (Brush)FindResource("TextGray");
+            BtnNavAI.Background = Brushes.Transparent; BtnNavAI.Foreground = (Brush)FindResource("TextGray");
+            BtnNavBulk.Background = Brushes.Transparent; BtnNavBulk.Foreground = (Brush)FindResource("TextGray");
+            BtnNavTriggers.Background = Brushes.Transparent; BtnNavTriggers.Foreground = (Brush)FindResource("TextGray");
+            BtnNavTickets.Background = Brushes.Transparent; BtnNavTickets.Foreground = (Brush)FindResource("TextGray");
+            if (BtnNavSchedule != null) { BtnNavSchedule.Background = Brushes.Transparent; BtnNavSchedule.Foreground = (Brush)FindResource("TextGray"); }
+
+            // Hide All
+            ViewConnection.Visibility = Visibility.Collapsed;
+            ViewAI.Visibility = Visibility.Collapsed;
+            ViewBulk.Visibility = Visibility.Collapsed;
+            ViewTriggers.Visibility = Visibility.Collapsed;
+            ViewTickets.Visibility = Visibility.Collapsed;
+            if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Collapsed;
+
+            // Activate Selected
+            switch (viewName)
+            {
+                case "Connection":
+                    ViewConnection.Visibility = Visibility.Visible;
+                    BtnNavConnect.Background = (Brush)FindResource("BorderColor");
+                    BtnNavConnect.Foreground = (Brush)FindResource("BrandPrimary");
+                    break;
+                case "AI":
+                    ViewAI.Visibility = Visibility.Visible;
+                    BtnNavAI.Background = (Brush)FindResource("BorderColor");
+                    BtnNavAI.Foreground = (Brush)FindResource("BrandPrimary");
+                    break;
+                case "Bulk":
+                    ViewBulk.Visibility = Visibility.Visible;
+                    BtnNavBulk.Background = (Brush)FindResource("BorderColor");
+                    BtnNavBulk.Foreground = (Brush)FindResource("BrandPrimary");
+                    break;
+                case "Triggers":
+                    ViewTriggers.Visibility = Visibility.Visible;
+                    BtnNavTriggers.Background = (Brush)FindResource("BorderColor");
+                    BtnNavTriggers.Foreground = (Brush)FindResource("BrandPrimary");
+                    break;
+                case "Tickets":
+                    ViewTickets.Visibility = Visibility.Visible;
+                    BtnNavTickets.Background = (Brush)FindResource("BorderColor");
+                    BtnNavTickets.Foreground = (Brush)FindResource("BrandPrimary");
+                    break;
+                case "Schedule":
+                    if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Visible;
+                    if (BtnNavSchedule != null) {
+                        BtnNavSchedule.Background = (Brush)FindResource("BorderColor");
+                        BtnNavSchedule.Foreground = (Brush)FindResource("BrandPrimary");
+                    }
+                    LoadAgendamentos();
+                    break;
+            }
+        }

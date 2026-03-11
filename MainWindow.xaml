@@ -143,6 +143,7 @@
                     </Button>
                     <Button x:Name="BtnNavBulk" Content="🚀  Disparo em Massa" Style="{StaticResource NavBtnStyle}" Click="NavBulk_Click"/>
                     <Button x:Name="BtnNavTriggers" Content="⚡  Gatilhos Rápidos" Style="{StaticResource NavBtnStyle}" Click="NavTriggers_Click"/>
+                    <Button x:Name="BtnNavSchedule" Content="📅  Agendamentos" Style="{StaticResource NavBtnStyle}" Click="NavSchedule_Click"/>
                 </StackPanel>
                 
                 <StackPanel Grid.Row="2" Margin="20" Opacity="0.6">
@@ -296,6 +297,26 @@
                             </ListBox.ItemContainerStyle>
                         </ListBox>
                     </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- View: Agendamentos -->
+            <StackPanel x:Name="ViewSchedule" Visibility="Collapsed">
+                <TextBlock Text="Gestão de Agendamentos" FontSize="28" FontWeight="Bold" Foreground="{StaticResource TextDark}"/>
+                <TextBlock Text="Visualize e gerencie os horários marcados pela IA." FontSize="14" Foreground="{StaticResource TextGray}" Margin="0,0,0,30"/>
+                
+                <Border Style="{StaticResource CardStyle}">
+                    <ListView ItemsSource="{Binding Agendamentos}" Height="500" BorderThickness="0" Background="Transparent">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="CLIENTE" Width="180" DisplayMemberBinding="{Binding ClienteNome}"/>
+                                <GridViewColumn Header="TELEFONE" Width="150" DisplayMemberBinding="{Binding ClienteTelefone}"/>
+                                <GridViewColumn Header="DATA/HORA" Width="150" DisplayMemberBinding="{Binding DataHora, StringFormat={}{0:dd/MM/yyyy HH:mm}}"/>
+                                <GridViewColumn Header="SERVIÇO" Width="150" DisplayMemberBinding="{Binding Servico}"/>
+                                <GridViewColumn Header="STATUS" Width="100" DisplayMemberBinding="{Binding Status}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
                 </Border>
             </StackPanel>
 

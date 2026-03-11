@@ -19,16 +19,22 @@ namespace BotWhatsappCSharp.Services
             _systemPrompt = systemPrompt;
         }
 
-        public async Task<string> GerarRespostaAsync(string userMessage)
+        public async Task<string> GerarRespostaAsync(string userMessage, string context = "")
         {
+            var messages = new System.Collections.Generic.List<object>
+            {
+                new { role = "system", content = _systemPrompt + (string.IsNullOrEmpty(context) ? "" : "\n\nCONTEXTO ATUAL:\n" + context) }
+            };
+
+            // Adiciona histórico ou contexto se necessário no futuro
+            messages.Add(new { role = "user", content = userMessage });
+
             var requestBody = new
             {
                 model = "llama-3.3-70b-versatile",
-                messages = new[]
-                {
-                    new { role = "system", content = _systemPrompt },
-                    new { role = "user", content = userMessage }
-                }
+                messages = messages.ToArray(),
+                temperature = 0.7,
+                max_tokens = 1024
             };
 
             string json = JsonSerializer.Serialize(requestBody);
@@ -39,7 +45,11 @@ namespace BotWhatsappCSharp.Services
             request.Content = content;
 
             var response = await _client.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                string error = await response.Content.ReadAsStringAsync();
+                throw new Exception($"Erro na API Groq: {response.StatusCode} - {error}");
+            }
 
             string responseString = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseString);

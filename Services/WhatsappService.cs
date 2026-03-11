@@ -139,28 +139,54 @@ namespace BotWhatsappCSharp.Services
             }
         }
 
-        public void EnviarAnexo(string caminhoArquivo)
+        public void EnviarAnexo(string caminhoArquivo, string legenda = "")
         {
             try
             {
                 if (!System.IO.File.Exists(caminhoArquivo)) return;
                 if (!IsDriverAtivo()) { Console.WriteLine("Tentativa de envio de anexo com driver inativo."); return; }
 
+                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(15));
+                
                 // 1. Clique no botão de anexar (+)
-                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(10));
                 var attachBtn = wait.Until(d => d.FindElement(By.XPath("//div[@title='Anexar'] | //span[@data-icon='plus'] | //span[@data-icon='add-light']")));
                 attachBtn.Click();
-                Thread.Sleep(500);
+                Thread.Sleep(800);
 
                 // 2. O input de arquivo fica oculto. Vamos encontrá-lo e enviar o path.
                 var fileInput = _driver.FindElement(By.XPath("//input[@type='file']"));
                 fileInput.SendKeys(caminhoArquivo);
-                Thread.Sleep(1500); // Aguarda carregar preview
+                
+                // Aguarda o preview carregar (importante para a legenda aparecer)
+                Thread.Sleep(2500); 
 
-                // 3. Clique no botão de enviar anexo
-                var sendBtn = wait.Until(d => d.FindElement(By.XPath("//span[@data-icon='send']")));
+                // 3. Se houver legenda, digita na caixa de texto do preview
+                if (!string.IsNullOrEmpty(legenda))
+                {
+                    try {
+                        var captionBox = wait.Until(d => d.FindElement(By.XPath("//div[contains(@class, 'copyable-text') and @contenteditable='true']")));
+                        captionBox.Click();
+                        Thread.Sleep(300);
+                        
+                        // Digitação Humana na Legenda
+                        var rand = new Random();
+                        foreach (char c in legenda)
+                        {
+                            captionBox.SendKeys(c.ToString());
+                            Thread.Sleep(rand.Next(20, 50));
+                        }
+                        Thread.Sleep(500);
+                    } catch (Exception ex) {
+                        Console.WriteLine("Erro ao inserir legenda: " + ex.Message);
+                    }
+                }
+
+                // 4. Clique no botão de enviar anexo
+                var sendBtn = wait.Until(d => d.FindElement(By.XPath("//span[@data-icon='send'] | //div[@role='button' and @aria-label='Enviar']")));
                 sendBtn.Click();
-                Thread.Sleep(2000); // Aguarda envio
+                
+                // Aguarda envio concluir (pode demorar para vídeos)
+                Thread.Sleep(3000); 
             }
             catch (Exception ex)
             {
@@ -168,7 +194,7 @@ namespace BotWhatsappCSharp.Services
             }
         }
 
-        public void ProcessarMensagensNaoLidas(Func<string, string, byte[], (string Resposta, string Anexo)> gerarResposta, Action<string> onLog = null)
+        public void ProcessarMensagensNaoLidas(Func<string, string, byte[], string, (string Resposta, string Anexo)> gerarResposta, Action<string> onLog = null)
         {
             try
             {
@@ -288,21 +314,37 @@ namespace BotWhatsappCSharp.Services
                                     onLog?.Invoke($"Lido: {texto.Substring(0, Math.Min(20, texto.Length))}...");
                                 }
 
-                                var (resposta, anexo) = gerarResposta(numeroTelefone, texto, audioData);
-                                
-                                if (!string.IsNullOrWhiteSpace(resposta))
+                                // Injeção de Contexto de Agendamento (Opcional)
+                                string context = "";
+                                if (!string.IsNullOrEmpty(texto) && (texto.ToLower().Contains("agendar") || texto.ToLower().Contains("horário") || texto.ToLower().Contains("disponível")))
                                 {
-                                    EnviarMensagemTextoAtual(resposta);
+                                    context = "AGENDAMENTO_TRIGGER";
                                 }
 
-                                 if (!string.IsNullOrWhiteSpace(anexo))
+                                var (resposta, anexo) = gerarResposta(numeroTelefone, texto, audioData, context);
+                                
+                                if (!string.IsNullOrWhiteSpace(anexo))
                                 {
                                     var files = anexo.Split('|', StringSplitOptions.RemoveEmptyEntries);
-                                    foreach (var file in files)
+                                    // Se houver apenas um anexo, envia com a resposta como legenda
+                                    if (files.Length == 1)
                                     {
-                                        EnviarAnexo(file);
-                                        Thread.Sleep(1000); // Pequena pausa entre anexos
+                                        EnviarAnexo(files[0], resposta);
                                     }
+                                    else
+                                    {
+                                        // Se houver múltiplos, envia o texto primeiro e depois os anexos
+                                        if (!string.IsNullOrWhiteSpace(resposta)) EnviarMensagemTextoAtual(resposta);
+                                        foreach (var file in files)
+                                        {
+                                            EnviarAnexo(file);
+                                            Thread.Sleep(1000);
+                                        }
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(resposta))
+                                {
+                                    EnviarMensagemTextoAtual(resposta);
                                 }
                             }
                         }

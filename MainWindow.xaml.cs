@@ -19,6 +19,7 @@ namespace BotWhatsappCSharp
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly WhatsappService _whatsappService;
+        private readonly SchedulingService _schedulingService;
         private readonly string _sessionPath;
         private readonly string _settingsPath;
         private AiAssistant _aiAssistant; 
@@ -29,6 +30,7 @@ namespace BotWhatsappCSharp
         // Dados
         public ObservableCollection<GatilhoModel> Gatilhos { get; set; } = new ObservableCollection<GatilhoModel>();
         public ObservableCollection<ChamadoModel> ChamadosAbertos { get; set; } = new ObservableCollection<ChamadoModel>();
+        public ObservableCollection<AgendamentoModel> Agendamentos { get; set; } = new ObservableCollection<AgendamentoModel>();
 
         private System.Collections.Generic.List<string> _pendingTriggerFiles = new System.Collections.Generic.List<string>();
         private string _pendingAiFile = "";
@@ -58,13 +60,21 @@ namespace BotWhatsappCSharp
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_sessionPath));
             
             _whatsappService = new WhatsappService(_sessionPath);
+            _schedulingService = new SchedulingService();
             _settingsPath = Path.Combine(Path.GetDirectoryName(_sessionPath)!, "settings.json");
             
             LoadSettings();
             LoadTriggers();
+            LoadAgendamentos();
 
             // Inicia na tela de conexão
             SelectView("Connection");
+        }
+
+        private void LoadAgendamentos()
+        {
+            Agendamentos.Clear();
+            foreach (var a in _schedulingService.ListarAgendamentos()) Agendamentos.Add(a);
         }
 
         // --- CONEXÃO ---
@@ -146,6 +156,7 @@ namespace BotWhatsappCSharp
         private void NavAI_Click(object sender, RoutedEventArgs e) => SelectView("AI");
         private void NavBulk_Click(object sender, RoutedEventArgs e) => SelectView("Bulk");
         private void NavTriggers_Click(object sender, RoutedEventArgs e) => SelectView("Triggers");
+        private void NavSchedule_Click(object sender, RoutedEventArgs e) => SelectView("Schedule");
         private void NavTickets_Click(object sender, RoutedEventArgs e) 
         { 
             SelectView("Tickets"); 
@@ -160,6 +171,7 @@ namespace BotWhatsappCSharp
             BtnNavBulk.Background = Brushes.Transparent; BtnNavBulk.Foreground = (Brush)FindResource("TextGray");
             BtnNavTriggers.Background = Brushes.Transparent; BtnNavTriggers.Foreground = (Brush)FindResource("TextGray");
             BtnNavTickets.Background = Brushes.Transparent; BtnNavTickets.Foreground = (Brush)FindResource("TextGray");
+            if (BtnNavSchedule != null) { BtnNavSchedule.Background = Brushes.Transparent; BtnNavSchedule.Foreground = (Brush)FindResource("TextGray"); }
 
             // Hide All
             ViewConnection.Visibility = Visibility.Collapsed;
@@ -167,6 +179,7 @@ namespace BotWhatsappCSharp
             ViewBulk.Visibility = Visibility.Collapsed;
             ViewTriggers.Visibility = Visibility.Collapsed;
             ViewTickets.Visibility = Visibility.Collapsed;
+            if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Collapsed;
 
             // Activate Selected
             switch (viewName)
@@ -196,6 +209,14 @@ namespace BotWhatsappCSharp
                     BtnNavTickets.Background = (Brush)FindResource("BorderColor");
                     BtnNavTickets.Foreground = (Brush)FindResource("BrandPrimary");
                     break;
+                case "Schedule":
+                    if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Visible;
+                    if (BtnNavSchedule != null) {
+                        BtnNavSchedule.Background = (Brush)FindResource("BorderColor");
+                        BtnNavSchedule.Foreground = (Brush)FindResource("BrandPrimary");
+                    }
+                    LoadAgendamentos();
+                    break;
             }
         }
 
@@ -215,13 +236,13 @@ namespace BotWhatsappCSharp
         {
             try
             {
-                var settings = new SettingsModel
-                {
-                    ApiKey = ApiKeyInput.Text,
-                    SystemPrompt = SystemPromptInput.Text,
-                    AiMediaFile = _pendingAiFile,
-                    BulkMediaFile = _pendingBulkFile
-                };
+                        var settings = new SettingsModel
+                        {
+                            ApiKey = ApiKeyInput.Text,
+                            SystemPrompt = SystemPromptInput.Text + "\n\nDIRETRIZES DE HUMANIZAÇÃO:\n- Use empatia contextual.\n- Varie o vocabulário.\n- Use confirmação ativa (ex: 'Prontinho! Reservei seu horário...').",
+                            AiMediaFile = _pendingAiFile,
+                            BulkMediaFile = _pendingBulkFile
+                        };
                 string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_settingsPath, json);
             }
@@ -328,80 +349,88 @@ namespace BotWhatsappCSharp
                     
                     await Task.Run(() => 
                     {
-                        _whatsappService.ProcessarMensagensNaoLidas((numeroTelefone, mensagemRecebida, audioData) =>
-                        {
-                            try
-                            {
-                                // Se houver áudio, transcreve antes de prosseguir
-                                if (audioData != null && _aiAssistant != null)
-                                {
-                                    AddLog("Transcrita áudio recebido...");
-                                    mensagemRecebida = _aiAssistant.TranscreverAudioAsync(audioData).GetAwaiter().GetResult();
-                                    AddLog($"[TRANSCRICAO] {mensagemRecebida}");
-                                }
-
-                                if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
-
-                                AddLog($"[{numeroTelefone}] Mensagem: {mensagemRecebida}");
-                                
-                                // 0. Verifica se é pedido de atendente
-                                string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor", "falar com pessoa", "human" };
-                                if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
-                                {
-                                    AddLog($"Pedido de atendente detectado de {numeroTelefone}!");
-                                    Application.Current.Dispatcher.Invoke(() => {
-                                        if (!ChamadosAbertos.Any(c => c.Numero == numeroTelefone)) {
-                                            ChamadosAbertos.Add(new ChamadoModel { 
-                                                Numero = numeroTelefone, 
-                                                UltimaMensagem = mensagemRecebida,
-                                                Horario = DateTime.Now
-                                            });
-                                            TemNovoChamado = true;
-                                        }
-                                    });
-                                    return ("Um atendente humano foi notificado e logo falará com você. Aguarde um momento.", "");
-                                }
-
-                                // 1. Verifica Gatilhos (Melhorado para precisão e suporte a palavras-chave)
-                                string msgLimpa = mensagemRecebida.Trim().ToLower();
-                                var gatilho = Gatilhos.FirstOrDefault(g => 
-                                {
-                                    string cmd = g.Comando.Trim().ToLower();
-                                    // Se o comando começar com '/', exige correspondência exata no início
-                                    if (cmd.StartsWith("/")) {
-                                        return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
-                                    }
-                                    // Caso contrário, trata como palavra-chave (contém a palavra)
-                                    return msgLimpa.Contains(cmd);
-                                });
-                                
-                                if (gatilho != null)
-                                {
-                                    AddLog($"[GATILHO] Comando '{gatilho.Comando}' detectado.");
-                                    return (gatilho.Resposta, string.Join("|", gatilho.CaminhosArquivos ?? new System.Collections.Generic.List<string>()));
-                                }
-                                else {
-                                    AddLog($"[DEBUG] Nenhum gatilho exato para '{msgLimpa}'");
-                                }
-
-                                // 2. Se não tem gatilho, usa IA
-                                if (_aiAssistant == null) {
-                                    AddLog("IA não configurada!");
-                                    return ("", "");
-                                }
-
-                                AddLog("Consultando IA...");
-                                string resposta = _aiAssistant.GerarRespostaAsync(mensagemRecebida).GetAwaiter().GetResult();
-                                AddLog("IA respondeu com sucesso.");
-                                return (resposta, _pendingAiFile);
-                            }
-                            catch (Exception ex)
-                            {
-                                string errorMsg = ex.InnerException?.Message ?? ex.Message;
-                                AddLog($"ERRO: {errorMsg}");
-                                return ("", ""); 
-                            }
-                        }, AddLog);
+	                        _whatsappService.ProcessarMensagensNaoLidas((numeroTelefone, mensagemRecebida, audioData, context) =>
+	                        {
+	                            try
+	                            {
+	                                // Se houver áudio, transcreve antes de prosseguir
+	                                if (audioData != null && _aiAssistant != null)
+	                                {
+	                                    AddLog("Transcrita áudio recebido...");
+	                                    mensagemRecebida = _aiAssistant.TranscreverAudioAsync(audioData).GetAwaiter().GetResult();
+	                                    AddLog($"[TRANSCRICAO] {mensagemRecebida}");
+	                                }
+	
+	                                if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
+	
+	                                AddLog($"[{numeroTelefone}] Mensagem: {mensagemRecebida}");
+	                                
+	                                // 0. Verifica se é pedido de atendente
+	                                string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor", "falar com pessoa", "human" };
+	                                if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
+	                                {
+	                                    AddLog($"Pedido de atendente detectado de {numeroTelefone}!");
+	                                    Application.Current.Dispatcher.Invoke(() => {
+	                                        if (!ChamadosAbertos.Any(c => c.Numero == numeroTelefone)) {
+	                                            ChamadosAbertos.Add(new ChamadoModel { 
+	                                                Numero = numeroTelefone, 
+	                                                UltimaMensagem = mensagemRecebida,
+	                                                Horario = DateTime.Now
+	                                            });
+	                                            TemNovoChamado = true;
+	                                        }
+	                                    });
+	                                    return ("Um atendente humano foi notificado e logo falará com você. Aguarde um momento.", "");
+	                                }
+	
+	                                // 1. Verifica Gatilhos
+	                                string msgLimpa = mensagemRecebida.Trim().ToLower();
+	                                var gatilho = Gatilhos.FirstOrDefault(g => 
+	                                {
+	                                    string cmd = g.Comando.Trim().ToLower();
+	                                    if (cmd.StartsWith("/")) return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
+	                                    return msgLimpa.Contains(cmd);
+	                                });
+	                                
+	                                if (gatilho != null)
+	                                {
+	                                    AddLog($"[GATILHO] Comando '{gatilho.Comando}' detectado.");
+	                                    return (gatilho.Resposta, string.Join("|", gatilho.CaminhosArquivos ?? new System.Collections.Generic.List<string>()));
+	                                }
+	
+	                                // 2. Se não tem gatilho, usa IA
+	                                if (_aiAssistant == null) {
+	                                    AddLog("IA não configurada!");
+	                                    return ("", "");
+	                                }
+	
+	                                string aiContext = "";
+	                                if (context == "AGENDAMENTO_TRIGGER")
+	                                {
+	                                    var slots = _schedulingService.GetHorariosDisponiveis(DateTime.Now.AddDays(1));
+	                                    aiContext = "HORÁRIOS DISPONÍVEIS PARA AMANHÃ:\n" + string.Join("\n", slots.Take(5).Select(s => s.ToString("HH:mm")));
+	                                    aiContext += "\nSe o usuário escolher, peça o nome para confirmar.";
+	                                }
+	
+	                                AddLog("Consultando IA...");
+	                                string resposta = _aiAssistant.GerarRespostaAsync(mensagemRecebida, aiContext).GetAwaiter().GetResult();
+	                                
+	                                // Lógica de Confirmação de Agendamento
+	                                if (resposta.ToLower().Contains("confirmado") && (msgLimpa.Contains(":") || msgLimpa.Contains("h")))
+	                                {
+	                                    AddLog($"Agendamento detectado para {numeroTelefone}");
+	                                }
+	
+	                                AddLog("IA respondeu com sucesso.");
+	                                return (resposta, _pendingAiFile);
+	                            }
+	                            catch (Exception ex)
+	                            {
+	                                string errorMsg = ex.InnerException?.Message ?? ex.Message;
+	                                AddLog($"ERRO: {errorMsg}");
+	                                return ("", ""); 
+	                            }
+	                        }, AddLog);
                     });
                 }
                 catch (Exception ex)
@@ -501,12 +530,14 @@ namespace BotWhatsappCSharp
 
                     Application.Current.Dispatcher.Invoke(() => BulkStatusLabel.Text = $"Enviando {count + 1}/{numbers.Length} para {num.Trim()}...");
                     
-                    _whatsappService.EnviarMensagem(num.Trim(), msg);
-                    
-                    // Enviar anexo se houver
+                    // Enviar com legenda se houver anexo, senão envia apenas texto
                     if (!string.IsNullOrEmpty(_pendingBulkFile))
                     {
-                        _whatsappService.EnviarAnexo(_pendingBulkFile);
+                        _whatsappService.EnviarAnexo(_pendingBulkFile, msg);
+                    }
+                    else
+                    {
+                        _whatsappService.EnviarMensagem(num.Trim(), msg);
                     }
 
                     count++;
