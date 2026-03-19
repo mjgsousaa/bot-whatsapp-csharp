@@ -87,20 +87,20 @@ namespace BotWhatsappCSharp
 
                         if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
 
-                        string msgHash = $"{n}_{mensagemRecebida?.Trim().GetHashCode()}";
+                        string msgHash = $"{n}_{mensagemRecebida.Trim().GetHashCode()}";
                         if (_ultimaMensagemRespondida.TryGetValue(n, out string? ultimoHash) && ultimoHash == msgHash) return ("", "");
                         _ultimaMensagemRespondida[n] = msgHash;
 
                         AddLog($"[{n}] {mensagemRecebida}");
                         
                         string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor" };
-                        if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
+                        if (mensagemRecebida != null && termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
                         {
                             AddLog($"Pedido de atendente detectado de {n}!");
                             Application.Current.Dispatcher.Invoke(() => {
-                                if (!ChamadosAbertos.Any(cham => cham.Numero == n)) {
+                                if (ChamadosAbertos != null && !ChamadosAbertos.Any(cham => cham.Numero == n)) {
                                     ChamadosAbertos.Add(new ChamadoModel { 
-                                        Numero = n, Nome = nome, UltimaMensagem = mensagemRecebida, Horario = DateTime.Now
+                                        Numero = n, Nome = nome ?? "Cliente", UltimaMensagem = mensagemRecebida, Horario = DateTime.Now
                                     });
                                     TemNovoChamado = true;
                                 }
@@ -108,7 +108,7 @@ namespace BotWhatsappCSharp
                             return ("Um atendente humano foi notificado. Aguarde um momento.", "");
                         }
 
-                        string msgLimpa = mensagemRecebida.Trim().ToLower();
+                        string msgLimpa = mensagemRecebida?.Trim().ToLower() ?? "";
                         var gatilho = Gatilhos.FirstOrDefault(g => {
                             if (string.IsNullOrEmpty(g.Comando)) return false;
                             string cmd = g.Comando.Trim().ToLower();
@@ -272,12 +272,12 @@ namespace BotWhatsappCSharp
 
         private void SelectView(string viewName)
         {
-            BtnNavConnect.Background = Brushes.Transparent; BtnNavConnect.Foreground = (Brush)FindResource("TextGray");
-            BtnNavAI.Background = Brushes.Transparent; BtnNavAI.Foreground = (Brush)FindResource("TextGray");
-            BtnNavBulk.Background = Brushes.Transparent; BtnNavBulk.Foreground = (Brush)FindResource("TextGray");
-            BtnNavTriggers.Background = Brushes.Transparent; BtnNavTriggers.Foreground = (Brush)FindResource("TextGray");
-            BtnNavTickets.Background = Brushes.Transparent; BtnNavTickets.Foreground = (Brush)FindResource("TextGray");
-            BtnNavEvoSetup.Background = Brushes.Transparent; BtnNavEvoSetup.Foreground = (Brush)FindResource("TextGray");
+            if (BtnNavConnect != null) { BtnNavConnect.Background = Brushes.Transparent; BtnNavConnect.Foreground = (Brush)FindResource("TextGray"); }
+            if (BtnNavAI != null) { BtnNavAI.Background = Brushes.Transparent; BtnNavAI.Foreground = (Brush)FindResource("TextGray"); }
+            if (BtnNavBulk != null) { BtnNavBulk.Background = Brushes.Transparent; BtnNavBulk.Foreground = (Brush)FindResource("TextGray"); }
+            if (BtnNavTriggers != null) { BtnNavTriggers.Background = Brushes.Transparent; BtnNavTriggers.Foreground = (Brush)FindResource("TextGray"); }
+            if (BtnNavTickets != null) { BtnNavTickets.Background = Brushes.Transparent; BtnNavTickets.Foreground = (Brush)FindResource("TextGray"); }
+            if (BtnNavEvoSetup != null) { BtnNavEvoSetup.Background = Brushes.Transparent; BtnNavEvoSetup.Foreground = (Brush)FindResource("TextGray"); }
             if (BtnNavSchedule != null) { BtnNavSchedule.Background = Brushes.Transparent; BtnNavSchedule.Foreground = (Brush)FindResource("TextGray"); }
 
             ViewConnection.Visibility = Visibility.Collapsed;
@@ -289,13 +289,13 @@ namespace BotWhatsappCSharp
 
             switch (viewName)
             {
-                case "Connection": ViewConnection.Visibility = Visibility.Visible; BtnNavConnect.Background = (Brush)FindResource("BorderColor"); break;
-                case "AI": ViewAI.Visibility = Visibility.Visible; BtnNavAI.Background = (Brush)FindResource("BorderColor"); break;
-                case "Bulk": ViewBulk.Visibility = Visibility.Visible; BtnNavBulk.Background = (Brush)FindResource("BorderColor"); break;
-                case "Triggers": ViewTriggers.Visibility = Visibility.Visible; BtnNavTriggers.Background = (Brush)FindResource("BorderColor"); break;
-                case "Tickets": ViewTickets.Visibility = Visibility.Visible; BtnNavTickets.Background = (Brush)FindResource("BorderColor"); break;
-                case "Schedule": ViewSchedule.Visibility = Visibility.Visible; BtnNavSchedule.Background = (Brush)FindResource("BorderColor"); RenderizarCalendario(); break;
-                case "Evo": BtnNavEvoSetup.Background = (Brush)FindResource("BorderColor"); break;
+                case "Connection": if (ViewConnection != null) ViewConnection.Visibility = Visibility.Visible; if (BtnNavConnect != null) BtnNavConnect.Background = (Brush)FindResource("BorderColor"); break;
+                case "AI": if (ViewAI != null) ViewAI.Visibility = Visibility.Visible; if (BtnNavAI != null) BtnNavAI.Background = (Brush)FindResource("BorderColor"); break;
+                case "Bulk": if (ViewBulk != null) ViewBulk.Visibility = Visibility.Visible; if (BtnNavBulk != null) BtnNavBulk.Background = (Brush)FindResource("BorderColor"); break;
+                case "Triggers": if (ViewTriggers != null) ViewTriggers.Visibility = Visibility.Visible; if (BtnNavTriggers != null) BtnNavTriggers.Background = (Brush)FindResource("BorderColor"); break;
+                case "Tickets": if (ViewTickets != null) ViewTickets.Visibility = Visibility.Visible; if (BtnNavTickets != null) BtnNavTickets.Background = (Brush)FindResource("BorderColor"); break;
+                case "Schedule": if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Visible; if (BtnNavSchedule != null) BtnNavSchedule.Background = (Brush)FindResource("BorderColor"); RenderizarCalendario(); break;
+                case "Evo": if (BtnNavEvoSetup != null) BtnNavEvoSetup.Background = (Brush)FindResource("BorderColor"); break;
             }
         }
 

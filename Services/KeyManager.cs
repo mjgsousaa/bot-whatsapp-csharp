@@ -52,14 +52,14 @@ namespace BotWhatsappCSharp.Services
                     }
                     else
                     {
-                        return new KeyResult(false, $"Licença expirada em {validade:dd/MM/yyyy}", cliente, null);
+                        return new KeyResult(false, $"Licença expirada em {validade:dd/MM/yyyy}", cliente, "");
                     }
                 }
                 return new KeyResult(false, "Data de validade inválida na chave.", "", "", "");
             }
             catch
             {
-                return new KeyResult(false, "Chave inválida ou corrompida.", null, null);
+                return new KeyResult(false, "Chave inválida ou corrompida.", "", "");
             }
         }
 

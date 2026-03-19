@@ -13,7 +13,7 @@ namespace BotWhatsappCSharp.Views
     {
         private readonly EvolutionSetupService _evoService;
         private readonly string _instancia;
-        private CancellationTokenSource _cts;
+        private CancellationTokenSource? _cts;
         private bool _conectado = false;
 
         public bool Conectado => _conectado;

@@ -89,21 +89,21 @@ namespace BotWhatsappCSharp.Services
       try
       {
         var r = await _client.GetAsync($"{_baseUrl}/instance/connect/{instancia}");
-        if (!r.IsSuccessStatusCode) return null;
+        if (!r.IsSuccessStatusCode) return string.Empty;
 
         string json = await r.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(json);
 
         if (doc.RootElement.TryGetProperty("base64", out var b64))
-          return b64.GetString();
+          return b64.GetString() ?? string.Empty;
 
         if (doc.RootElement.TryGetProperty("qrcode", out var qr) &&
             qr.TryGetProperty("base64", out var qrb64))
-          return qrb64.GetString();
+          return qrb64.GetString() ?? string.Empty;
 
-        return null;
+        return string.Empty;
       }
-      catch { return null; }
+      catch { return string.Empty; }
     }
 
         public async Task<string> GetExternalIP()
