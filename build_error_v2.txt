@@ -1,0 +1,11 @@
+  Determinando os projetos a serem restaurados...
+  Todos os projetos est├úo atualizados para restaura├º├úo.
+C:\Users\TopFama\Desktop\meus_projetos\botzap_com_IA\BotNormal\bot-whatsapp-csharp\App.xaml(36,14): error MC3074: a marca 'Template' n├úo existe no namespace XML 'http://schemas.microsoft.com/winfx/2006/xaml/presentation'. Linha 36, posi├º├úo 14. [C:\Users\TopFama\Desktop\meus_projetos\botzap_com_IA\BotNormal\bot-whatsapp-csharp\BotWhatsappCSharp.csproj]
+
+FALHA da compila├º├úo.
+
+C:\Users\TopFama\Desktop\meus_projetos\botzap_com_IA\BotNormal\bot-whatsapp-csharp\App.xaml(36,14): error MC3074: a marca 'Template' n├úo existe no namespace XML 'http://schemas.microsoft.com/winfx/2006/xaml/presentation'. Linha 36, posi├º├úo 14. [C:\Users\TopFama\Desktop\meus_projetos\botzap_com_IA\BotNormal\bot-whatsapp-csharp\BotWhatsappCSharp.csproj]
+    0 Aviso(s)
+    1 Erro(s)
+
+Tempo Decorrido 00:00:03.54

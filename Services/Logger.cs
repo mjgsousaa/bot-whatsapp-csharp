@@ -37,7 +37,7 @@ namespace BotWhatsappCSharp.Services
             }
         }
 
-        public static void Error(string message, Exception ex = null)
+        public static void Error(string message, Exception? ex = null)
         {
             string msg = message;
             if (ex != null)

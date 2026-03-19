@@ -1,402 +1,319 @@
-using OpenQA.Selenium;
-using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.Support.UI;
-using OpenQA.Selenium.Interactions;
 using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using BotWhatsappCSharp.Models;
 
 namespace BotWhatsappCSharp.Services
 {
     public class WhatsappService
     {
-        private IWebDriver _driver;
-        private bool _botAtivo = false;
-        private readonly string _sessionPath;
+        private static readonly HttpClient _client = new HttpClient();
+        private readonly string _baseUrl;
+        private readonly string _apiKey;
+        private readonly string _instanceName;
+        private bool _conectado = false;
 
-        public WhatsappService(string sessionPath)
+        public WhatsappService(string baseUrl, string apiKey, string instanceName)
         {
-            _sessionPath = sessionPath;
+            _baseUrl = baseUrl.TrimEnd('/');
+            _apiKey = apiKey;
+            _instanceName = instanceName;
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Add("apikey", _apiKey);
         }
 
-        public bool IsDriverAtivo()
-        {
-            try
-            {
-                return _driver != null && _driver.WindowHandles.Count > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        public bool IsDriverAtivo() => _conectado;
 
         public async Task IniciarAsync(Action<string> onStatus)
         {
-            await Task.Run(() =>
+            onStatus("Verificando conexão com Evolution API...");
+            int tentativas = 0;
+
+            while (tentativas < 20)
             {
                 try
                 {
-                    if (IsDriverAtivo())
+                    var response = await _client.GetAsync($"{_baseUrl}/instance/connectionState/{_instanceName}");
+                    
+                    if (response.IsSuccessStatusCode)
                     {
-                        onStatus("⚠ Navegador já está aberto.");
-                        return;
+                        string body = await response.Content.ReadAsStringAsync();
+                        using var doc = JsonDocument.Parse(body);
+                        string? state = doc.RootElement.GetProperty("instance").GetProperty("state").GetString();
+
+                        if (state == "open")
+                        {
+                            _conectado = true;
+                            onStatus("✅ Conectado!");
+                            return;
+                        }
+                        else if (state == "connecting" || state == "qr")
+                        {
+                            onStatus($"📱 Aguardando QR Code ({tentativas + 1}/20)...");
+                        }
+                        else
+                        {
+                            onStatus("📱 Criando/Resetando instância...");
+                            await CriarInstanciaAsync();
+                        }
                     }
-
-                    onStatus("Iniciando Navegador...");
-                    Fechar(); // Garante limpeza anterior
-
-                    var options = new ChromeOptions();
-                    options.AddArgument("--user-data-dir=" + _sessionPath);
-                    options.AddArgument("--log-level=3");
-                    options.AddArgument("--remote-allow-origins=*");
-                    options.AddArgument("--disable-blink-features=AutomationControlled");
-                    
-                    // Stealth & Stability
-                    options.AddArgument("--no-sandbox");
-                    options.AddArgument("--disable-dev-shm-usage");
-                    options.AddArgument("--disable-gpu");
-                    options.AddArgument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-                    
-                    options.AddExcludedArgument("enable-automation");
-                    options.AddAdditionalOption("useAutomationExtension", false);
-
-                    _driver = new ChromeDriver(options);
-                    _driver.Navigate().GoToUrl("https://web.whatsapp.com");
-
-                    onStatus("Aguardando QR Code ou Login...");
-                    
-                    var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(60));
-                    try 
+                    else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                     {
-                        wait.Until(d => d.FindElements(By.Id("side")).Count > 0);
-                        onStatus("✅ Conectado!");
-                    }
-                    catch (WebDriverTimeoutException)
-                    {
-                        onStatus("⚠ Tempo limite excedido. Tente escanear novamente.");
+                        onStatus("📱 Instância não encontrada. Criando...");
+                        await CriarInstanciaAsync();
                     }
                 }
-                catch (Exception e)
+                catch (Exception ex)
                 {
-                    onStatus("Erro: " + e.Message);
-                    Fechar();
+                    onStatus($"❌ Erro: {ex.Message}");
                 }
-            });
+
+                tentativas++;
+                await Task.Delay(3000);
+            }
+
+            onStatus("❌ Tempo limite excedido. Verifique o painel da Evolution API.");
         }
 
-        public void LigarBot()
+        private async Task CriarInstanciaAsync()
         {
-            _botAtivo = true;
+            var body = new
+            {
+                instanceName = _instanceName,
+                qrcode = true,
+                integration = "WHATSAPP-BAILEYS"
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            await _client.PostAsync($"{_baseUrl}/instance/create", content);
         }
 
-        public void DesligarBot()
+        public async Task ConfigurarWebhookManualAsync(string webhookUrl)
         {
-            _botAtivo = false;
+            var body = new
+            {
+                enabled = true,
+                url = webhookUrl,
+                webhookByEvents = false,
+                webhookBase64 = true,
+                events = new[] { "messages.upsert", "connection.update" }
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            var response = await _client.PostAsync($"{_baseUrl}/webhook/set/{_instanceName}", content);
+            Logger.Log("Webhook configurado: " + response.StatusCode);
         }
 
         public void EnviarMensagem(string numero, string mensagem)
         {
             try
             {
-                // Limpar número (apenas dígitos)
-                string numLimpo = new string(numero.Where(char.IsDigit).ToArray());
-                if (!numLimpo.StartsWith("55") && numLimpo.Length <= 11) numLimpo = "55" + numLimpo;
+                string numLimpo = LimparNumero(numero);
+                var body = new { number = numLimpo, text = mensagem };
+                var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-                string url = $"https://web.whatsapp.com/send?phone={numLimpo}";
+                var response = _client.PostAsync($"{_baseUrl}/message/sendText/{_instanceName}", content).GetAwaiter().GetResult();
                 
-                if (!IsDriverAtivo()) { Console.WriteLine("Tentativa de envio com driver inativo."); return; }
+                if (response.IsSuccessStatusCode)
+                {
+                    Logger.Log($"[SISTEMA] Resposta enviada com sucesso para {numero}");
+                }
+                else
+                {
+                    string error = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Logger.Log($"[ERRO API] Falha ao enviar para {numero}: {response.StatusCode} - {error}");
+                }
 
-                _driver.Navigate().GoToUrl(url);
+                Random rand = new Random();
+                Thread.Sleep(rand.Next(1200, 3500));
+            }
+            catch (Exception ex) { Logger.Log($"Erro EnviarMensagem: {ex.Message}"); }
+        }
 
-                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(25));
+        public void EnviarAnexo(string numero, string caminhoArquivo, string legenda = "")
+        {
+            try
+            {
+                if (!File.Exists(caminhoArquivo)) return;
+                string numLimpo = LimparNumero(numero);
+                string extensao = Path.GetExtension(caminhoArquivo).ToLower();
+                string mediaType = "document";
+                string endpoint = "sendMedia";
+
+                if (new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" }.Contains(extensao)) mediaType = "image";
+                else if (new[] { ".mp4", ".avi", ".mov" }.Contains(extensao)) mediaType = "video";
+                else if (new[] { ".mp3", ".ogg", ".aac", ".opus" }.Contains(extensao)) 
+                { 
+                    mediaType = "audio"; 
+                    endpoint = "sendPtv";
+                }
+
+                byte[] bytes = File.ReadAllBytes(caminhoArquivo);
+                string base64 = Convert.ToBase64String(bytes);
+
+                object body;
+                if (mediaType == "audio")
+                {
+                    body = new { number = numLimpo, audio = base64, encoding = true };
+                }
+                else
+                {
+                    body = new {
+                        number = numLimpo,
+                        mediatype = mediaType,
+                        mimetype = DetectarMimeType(caminhoArquivo),
+                        caption = legenda,
+                        media = base64,
+                        fileName = Path.GetFileName(caminhoArquivo)
+                    };
+                }
+
+                var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+                var response = _client.PostAsync($"{_baseUrl}/message/{endpoint}/{_instanceName}", content).GetAwaiter().GetResult();
                 
-                // Espera a caixa de mensagem aparecer
-                var box = wait.Until(d => d.FindElement(By.XPath("//footer//div[@contenteditable='true'] | //div[@contenteditable='true'][@data-tab='10']")));
+                if (response.IsSuccessStatusCode)
+                {
+                    Logger.Log($"[SISTEMA] Anexo ({mediaType}) enviado para {numero}");
+                }
+                else
+                {
+                    string error = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Logger.Log($"[ERRO API] Falha ao enviar anexo: {response.StatusCode} - {error}");
+                }
                 
-                box.Click();
-                Thread.Sleep(500);
+                Thread.Sleep(2000);
+            }
+            catch (Exception ex) { Logger.Log($"Erro EnviarAnexo: {ex.Message}"); }
+        }
 
-                // Digitação Humana
+        public void EnviarAnexoGatilho(string numero, string caminhoArquivo, string legenda, TipoMidia tipo)
+        {
+            string mediaType = tipo switch {
+                TipoMidia.Imagem => "image",
+                TipoMidia.PDF    => "document",
+                TipoMidia.Audio  => "audio",
+                TipoMidia.Video  => "video",
+                _                => "document"
+            };
+            
+            if (!File.Exists(caminhoArquivo))
+            {
+                Logger.Error($"Arquivo não encontrado: {caminhoArquivo}");
+                return;
+            }
+            
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(caminhoArquivo);
+                string base64 = Convert.ToBase64String(bytes);
+                string mime = DetectarMimeType(caminhoArquivo);
+                string nomeArq = Path.GetFileName(caminhoArquivo);
+                string numLimpo = LimparNumero(numero);
+                
+                object body;
+                string endpoint;
+                
+                if (tipo == TipoMidia.Audio)
+                {
+                    endpoint = $"{_baseUrl}/message/sendPtv/{_instanceName}";
+                    body = new { number = numLimpo, audio = base64, encoding = true };
+                }
+                else
+                {
+                    endpoint = $"{_baseUrl}/message/sendMedia/{_instanceName}";
+                    body = new {
+                        number = numLimpo,
+                        mediatype = mediaType,
+                        mimetype = mime,
+                        caption = legenda,
+                        media = base64,
+                        fileName = nomeArq
+                    };
+                }
+
+                var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+                var response = _client.PostAsync(endpoint, content).GetAwaiter().GetResult();
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    string err = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Logger.Error($"Erro ao enviar mídia ({tipo}): {err}");
+                }
+                
                 var rand = new Random();
-                foreach (char c in mensagem)
-                {
-                    box.SendKeys(c.ToString());
-                    Thread.Sleep(rand.Next(20, 80)); 
-                }
-
-                Thread.Sleep(800);
-                box.SendKeys(Keys.Enter);
-                
-                // Aguarda um pouco antes de considerar "enviado" para evitar fechar antes da hora
-                Thread.Sleep(2000); 
+                Thread.Sleep(rand.Next(1200, 3000));
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao enviar para {numero}: {ex.Message}");
-            }
+            catch (Exception ex) { Logger.Error("Exceção ao enviar mídia", ex); }
         }
 
-        public void EnviarAnexo(string caminhoArquivo, string legenda = "")
+        public void ProcessarMensagemWebhook(
+            string numeroRemetente, 
+            string texto, 
+            byte[]? audioData,
+            string contexto,
+            Func<string, string, byte[]?, string, (string Resposta, string Anexo)> gerarResposta,
+            Action<string> onLog)
         {
-            try
+            var (resposta, anexo) = gerarResposta(numeroRemetente, texto, audioData, contexto);
+            
+            if (!string.IsNullOrWhiteSpace(anexo))
             {
-                if (!System.IO.File.Exists(caminhoArquivo)) return;
-                if (!IsDriverAtivo()) { Console.WriteLine("Tentativa de envio de anexo com driver inativo."); return; }
-
-                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(15));
-                
-                // 1. Clique no botão de anexar (+)
-                var attachBtn = wait.Until(d => d.FindElement(By.XPath("//div[@title='Anexar'] | //span[@data-icon='plus'] | //span[@data-icon='add-light']")));
-                attachBtn.Click();
-                Thread.Sleep(800);
-
-                // 2. O input de arquivo fica oculto. Vamos encontrá-lo e enviar o path.
-                var fileInput = _driver.FindElement(By.XPath("//input[@type='file']"));
-                fileInput.SendKeys(caminhoArquivo);
-                
-                // Aguarda o preview carregar (importante para a legenda aparecer)
-                Thread.Sleep(2500); 
-
-                // 3. Se houver legenda, digita na caixa de texto do preview
-                if (!string.IsNullOrEmpty(legenda))
+                var files = anexo.Split('|', StringSplitOptions.RemoveEmptyEntries);
+                if (files.Length == 1)
                 {
-                    try {
-                        var captionBox = wait.Until(d => d.FindElement(By.XPath("//div[contains(@class, 'copyable-text') and @contenteditable='true']")));
-                        captionBox.Click();
-                        Thread.Sleep(300);
-                        
-                        // Digitação Humana na Legenda
-                        var rand = new Random();
-                        foreach (char c in legenda)
-                        {
-                            captionBox.SendKeys(c.ToString());
-                            Thread.Sleep(rand.Next(20, 50));
-                        }
-                        Thread.Sleep(500);
-                    } catch (Exception ex) {
-                        Console.WriteLine("Erro ao inserir legenda: " + ex.Message);
-                    }
+                    EnviarAnexo(numeroRemetente, files[0], resposta);
                 }
-
-                // 4. Clique no botão de enviar anexo
-                var sendBtn = wait.Until(d => d.FindElement(By.XPath("//span[@data-icon='send'] | //div[@role='button' and @aria-label='Enviar']")));
-                sendBtn.Click();
-                
-                // Aguarda envio concluir (pode demorar para vídeos)
-                Thread.Sleep(3000); 
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Erro ao enviar anexo: " + ex.Message);
-            }
-        }
-
-        public void ProcessarMensagensNaoLidas(Func<string, string, byte[], string, (string Resposta, string Anexo)> gerarResposta, Action<string> onLog = null)
-        {
-            try
-            {
-                var unreadBadges = _driver.FindElements(By.XPath("//span[@aria-label]//span[contains(@dir, 'ltr')] | //span[contains(@aria-label, 'não lida')] | //span[contains(@aria-label, 'unread')]"));
-                
-                if (unreadBadges.Count == 0) return;
-
-                onLog?.Invoke($"[DEBUG] {unreadBadges.Count} conversas com notificação detectadas.");
-                onLog?.Invoke($"{unreadBadges.Count} conversas não lidas.");
-
-                foreach (var badge in unreadBadges.ToList())
+                else
                 {
-                    try 
+                    if (!string.IsNullOrWhiteSpace(resposta)) EnviarMensagem(numeroRemetente, resposta);
+                    foreach (var file in files)
                     {
-                        IWebElement chatRow;
-                        try {
-                            // Tenta encontrar o container do chat que é clicável e contém os dados principais
-                            chatRow = badge.FindElement(By.XPath("./ancestor::div[@role='listitem' or contains(@class, 'lhwtv60a') or contains(@class, '_ak8l')]"));
-                        } catch {
-                            // Fallback mais agressivo subindo até encontrar um div com largura significativa que pareça o card
-                            chatRow = badge;
-                            for(int i=0; i<10; i++) {
-                                try {
-                                    if (chatRow.TagName == "div" && chatRow.Size.Width > 200) break;
-                                    chatRow = chatRow.FindElement(By.XPath(".."));
-                                } catch { break; }
-                            }
-                        }
-                        
-                        // Garante visibilidade e clica
-                        ((IJavaScriptExecutor)_driver).ExecuteScript("arguments[0].scrollIntoView(true);", chatRow);
-                        Thread.Sleep(500);
-                        chatRow.Click();
-                        Thread.Sleep(1500); 
-
-                        // Extrair número do telefone
-                        string numeroTelefone = "Desconhecido";
-                        try {
-                            var js = (IJavaScriptExecutor)_driver;
-                            string script = @"
-                                function getPhone() {
-                                    const header = document.querySelector('header');
-                                    if (!header) return 'Desconhecido';
-                                    const titleEl = header.querySelector('[title]');
-                                    if (titleEl) {
-                                        const title = titleEl.getAttribute('title');
-                                        if (title && /^\+?[\d\s\-()]+$/.test(title)) return title;
-                                    }
-                                    const spans = header.querySelectorAll('span');
-                                    for (let s of spans) {
-                                        if (/^\+?[\d\s\-()]{8,}$/.test(s.innerText)) return s.innerText;
-                                    }
-                                    return 'Contato Salvo';
-                                }
-                                return getPhone();";
-                            numeroTelefone = js.ExecuteScript(script).ToString();
-                        } catch { }
-
-                        var msgs = _driver.FindElements(By.XPath("//div[contains(@class, 'message-in')]"));
-                        if (msgs.Count > 0)
-                        {
-                            var lastMsg = msgs.Last();
-                            string texto = "";
-                            byte[] audioData = null;
-
-                            // Verifica se é audio (mesma lógica anterior, mas dentro do fluxo otimizado)
-                            try {
-                                var audioBubbles = lastMsg.FindElements(By.XPath(".//div[contains(@data-testid, 'audio-bubble')] | .//span[@data-testid='audio-play']"));
-                                if (audioBubbles.Count > 0)
-                                {
-                                    onLog?.Invoke("[DEBUG] Áudio detectado. Tentando extrair...");
-                                    string script = @"
-                                        var audio = arguments[0].querySelector('audio');
-                                        if (!audio) return null;
-                                        var xhr = new XMLHttpRequest();
-                                        xhr.open('GET', audio.src, false);
-                                        xhr.responseType = 'arraybuffer';
-                                        xhr.send(null);
-                                        if (xhr.status === 200) {
-                                            var bytes = new Uint8Array(xhr.response);
-                                            return Array.from(bytes);
-                                        }
-                                        return null;";
-                                    
-                                    var js = (IJavaScriptExecutor)_driver;
-                                    var result = js.ExecuteScript(script, lastMsg) as System.Collections.Generic.IEnumerable<object>;
-                                    if (result != null)
-                                    {
-                                        audioData = result.Select(x => Convert.ToByte(x)).ToArray();
-                                        onLog?.Invoke($"[DEBUG] Áudio extraído com sucesso ({audioData.Length} bytes).");
-                                    }
-                                }
-                            } catch (Exception ex) {
-                                onLog?.Invoke($"[DEBUG] Falha ao capturar áudio: {ex.Message}");
-                            }
-
-                            // EXTRAÇÃO DE TEXTO MELHORADA: Busca apenas o conteúdo real da mensagem
-                            try {
-                                // Tenta pegar o span específico do texto, ignorando adornos e horários
-                                var textElement = lastMsg.FindElement(By.XPath(".//span[contains(@class, 'selectable-text') and not(contains(@class, 'lhwtv60a'))] | .//div[contains(@class, 'copyable-text')]//span"));
-                                texto = textElement.Text;
-                            } catch {
-                                // Fallback: pegar o texto da bolha mas filtrar linhas que parecem horário (HH:mm)
-                                string fullText = lastMsg.Text;
-                                var lines = fullText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                                                    .Where(l => !System.Text.RegularExpressions.Regex.IsMatch(l.Trim(), @"^\d{1,2}:\d{2}(\s?[AaPp][Mm])?$"))
-                                                    .Where(l => l.Length > 0 && !l.Contains("Lida") && !l.Contains("✅"))
-                                                    .ToList();
-                                texto = lines.FirstOrDefault() ?? "";
-                            }
-
-                            if (!string.IsNullOrWhiteSpace(texto) || audioData != null)
-                            {
-                                if (!string.IsNullOrWhiteSpace(texto))
-                                {
-                                    onLog?.Invoke($"[DEBUG] Texto capturado: '{texto}'");
-                                    onLog?.Invoke($"Lido: {texto.Substring(0, Math.Min(20, texto.Length))}...");
-                                }
-
-                                // Injeção de Contexto de Agendamento (Opcional)
-                                string context = "";
-                                if (!string.IsNullOrEmpty(texto) && (texto.ToLower().Contains("agendar") || texto.ToLower().Contains("horário") || texto.ToLower().Contains("disponível")))
-                                {
-                                    context = "AGENDAMENTO_TRIGGER";
-                                }
-
-                                var (resposta, anexo) = gerarResposta(numeroTelefone, texto, audioData, context);
-                                
-                                if (!string.IsNullOrWhiteSpace(anexo))
-                                {
-                                    var files = anexo.Split('|', StringSplitOptions.RemoveEmptyEntries);
-                                    // Se houver apenas um anexo, envia com a resposta como legenda
-                                    if (files.Length == 1)
-                                    {
-                                        EnviarAnexo(files[0], resposta);
-                                    }
-                                    else
-                                    {
-                                        // Se houver múltiplos, envia o texto primeiro e depois os anexos
-                                        if (!string.IsNullOrWhiteSpace(resposta)) EnviarMensagemTextoAtual(resposta);
-                                        foreach (var file in files)
-                                        {
-                                            EnviarAnexo(file);
-                                            Thread.Sleep(1000);
-                                        }
-                                    }
-                                }
-                                else if (!string.IsNullOrWhiteSpace(resposta))
-                                {
-                                    EnviarMensagemTextoAtual(resposta);
-                                }
-                            }
-                        }
+                        EnviarAnexo(numeroRemetente, file);
+                        Thread.Sleep(1000);
                     }
-                    catch (Exception ex)
-                    {
-                        onLog?.Invoke("Erro no Chat: " + ex.Message);
-                    }
-
-                    try { new Actions(_driver).SendKeys(Keys.Escape).Perform(); } catch {}
-                    Thread.Sleep(500);
                 }
             }
-            catch (Exception ex)
+            else if (!string.IsNullOrWhiteSpace(resposta))
             {
-                onLog?.Invoke("Erro Loop: " + ex.Message);
+                EnviarMensagem(numeroRemetente, resposta);
             }
         }
 
-        public void EnviarMensagemTextoAtual(string mensagem)
+        private string DetectarMimeType(string caminho)
         {
-            try
+            switch (Path.GetExtension(caminho).ToLower())
             {
-                // Seletor mais moderno para a caixa de texto
-                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(5));
-                var box = wait.Until(d => d.FindElement(By.XPath("//footer//div[@contenteditable='true'] | //div[@contenteditable='true'][@data-tab='10']")));
-                
-                box.Click();
-                Thread.Sleep(300);
-
-                // Digitação Humana (Simulando)
-                var rand = new Random();
-                foreach (char c in mensagem)
-                {
-                    box.SendKeys(c.ToString());
-                    // Atraso randômico entre 30ms e 120ms por letra
-                    Thread.Sleep(rand.Next(30, 120));
-                }
-                
-                Thread.Sleep(500);
-                box.SendKeys(Keys.Enter);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Erro ao responder: " + e.Message);
+                case ".jpg": case ".jpeg": return "image/jpeg";
+                case ".png": return "image/png";
+                case ".gif": return "image/gif";
+                case ".webp": return "image/webp";
+                case ".mp4": return "video/mp4";
+                case ".mp3": return "audio/mpeg";
+                case ".ogg": case ".opus": return "audio/ogg";
+                case ".aac": return "audio/aac";
+                case ".pdf": return "application/pdf";
+                default: return "application/octet-stream";
             }
         }
 
-        public void Fechar()
+        private string LimparNumero(string numero)
         {
-            _botAtivo = false;
-            try { _driver?.Quit(); } catch {}
+            string num = new string(numero.Where(char.IsDigit).ToArray());
+            if (num.Length <= 11 && !num.StartsWith("55")) num = "55" + num;
+            return num;
         }
+
+        public void SetConectado(bool conectado) { _conectado = conectado; }
+        public void LigarBot() { _conectado = true; }
+        public void DesligarBot() { _conectado = false; }
+        public void Fechar() { _conectado = false; }
     }
 }

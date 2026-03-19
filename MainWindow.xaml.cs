@@ -12,30 +12,36 @@ using System.Runtime.CompilerServices;
 using Microsoft.Win32;
 using BotWhatsappCSharp.Services;
 using BotWhatsappCSharp.Models;
-using System.Text.Json;
+using BotWhatsappCSharp.Views;
+using System.Collections.Generic;
+using System.Windows.Input;
 
 namespace BotWhatsappCSharp
 {
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
+        private readonly DatabaseService _databaseService;
         private readonly WhatsappService _whatsappService;
         private readonly SchedulingService _schedulingService;
-        private readonly string _sessionPath;
-        private readonly string _settingsPath;
-        private AiAssistant _aiAssistant; 
+        private readonly WebhookServer _webhookServer;
+        private AiAssistant? _aiAssistant; 
         private bool _isConnecting = false;
         private bool _botLoopActive = false;
-        private CancellationTokenSource _cancellationTokenSource;
-
-        // Dados
+        
         public ObservableCollection<GatilhoModel> Gatilhos { get; set; } = new ObservableCollection<GatilhoModel>();
         public ObservableCollection<ChamadoModel> ChamadosAbertos { get; set; } = new ObservableCollection<ChamadoModel>();
         public ObservableCollection<AgendamentoModel> Agendamentos { get; set; } = new ObservableCollection<AgendamentoModel>();
 
-        private System.Collections.Generic.List<string> _pendingTriggerFiles = new System.Collections.Generic.List<string>();
+        private List<string> _pendingTriggerFiles = new List<string>();
         private string _pendingAiFile = "";
-        private string _pendingBulkFile = "";
+        private string _bulkMidiaPath = "";
+        private TipoMidia _bulkTipoMidia = TipoMidia.Nenhum;
         private bool _temNovoChamado = false;
+        private readonly Dictionary<string, string> _ultimaMensagemRespondida = new Dictionary<string, string>();
+        
+        private DateTime _mesAtual = DateTime.Today;
+        private List<SlotConfigurado> _slotsDoMes = new();
+        
         public bool TemNovoChamado 
         { 
             get => _temNovoChamado; 
@@ -43,7 +49,7 @@ namespace BotWhatsappCSharp
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null) => 
+        protected void OnPropertyChanged([CallerMemberName] string? name = null) => 
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
         public MainWindow()
@@ -51,23 +57,122 @@ namespace BotWhatsappCSharp
             InitializeComponent();
             DataContext = this;
             
-            // Definir caminho da sessão no AppData para evitar problemas de permissão
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            _sessionPath = System.IO.Path.Combine(appData, "BotZapAI", "zap_session");
+            _databaseService = new DatabaseService();
+
+            string baseUrl = _databaseService.ObterConfiguracao("evo_base_url", "https://evolutionapi.vps7841.panel.icontainer.cloud");
+            string apiKey = _databaseService.ObterConfiguracao("evo_api_key", "wFRfS5EhXJkbC6FKJi7fDYDsFwsbWkYD");
+            string instance = _databaseService.ObterConfiguracao("evo_instance", "botzap");
+            string webhookPortStr = _databaseService.ObterConfiguracao("evo_webhook_port", "3001");
+            int webhookPort = int.TryParse(webhookPortStr, out int p) ? p : 3001;
+            AddLog($"[SISTEMA] Iniciando Webhook na porta: {webhookPort}");
+
+            _whatsappService = new WhatsappService(baseUrl, apiKey, instance);
+            _schedulingService = new SchedulingService(_databaseService);
             
-            // Garantir que o diretório existe (para o WhatsappService)
-            if (!System.IO.Directory.Exists(System.IO.Path.GetDirectoryName(_sessionPath)))
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_sessionPath));
-            
-            _whatsappService = new WhatsappService(_sessionPath);
-            _schedulingService = new SchedulingService();
-            _settingsPath = Path.Combine(Path.GetDirectoryName(_sessionPath)!, "settings.json");
-            
+            _webhookServer = new WebhookServer(webhookPort, (numero, texto, audio, ctx, nome) => 
+            {
+                if (!_botLoopActive) return;
+
+                _whatsappService.ProcessarMensagemWebhook(numero, texto, audio, ctx, (n, m, audioData, c) =>
+                {
+                    try
+                    {
+                        string mensagemRecebida = m;
+                        if (audioData != null && _aiAssistant != null)
+                        {
+                            AddLog("Transcrevendo áudio recebido...");
+                            mensagemRecebida = _aiAssistant.TranscreverAudioAsync(audioData).GetAwaiter().GetResult();
+                            AddLog($"[TRANSCRICAO] {mensagemRecebida}");
+                        }
+
+                        if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
+
+                        string msgHash = $"{n}_{mensagemRecebida?.Trim().GetHashCode()}";
+                        if (_ultimaMensagemRespondida.TryGetValue(n, out string? ultimoHash) && ultimoHash == msgHash) return ("", "");
+                        _ultimaMensagemRespondida[n] = msgHash;
+
+                        AddLog($"[{n}] {mensagemRecebida}");
+                        
+                        string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor" };
+                        if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
+                        {
+                            AddLog($"Pedido de atendente detectado de {n}!");
+                            Application.Current.Dispatcher.Invoke(() => {
+                                if (!ChamadosAbertos.Any(cham => cham.Numero == n)) {
+                                    ChamadosAbertos.Add(new ChamadoModel { 
+                                        Numero = n, Nome = nome, UltimaMensagem = mensagemRecebida, Horario = DateTime.Now
+                                    });
+                                    TemNovoChamado = true;
+                                }
+                            });
+                            return ("Um atendente humano foi notificado. Aguarde um momento.", "");
+                        }
+
+                        string msgLimpa = mensagemRecebida.Trim().ToLower();
+                        var gatilho = Gatilhos.FirstOrDefault(g => {
+                            string cmd = g.Comando.Trim().ToLower();
+                            if (cmd.StartsWith("/")) {
+                                // Comandos com barra: correspondência exata ou início (ex: /ajuda agora)
+                                return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
+                            }
+                            // Palavras-chave: se a mensagem contém o termo
+                            return msgLimpa.Contains(cmd);
+                        });
+                        
+                        if (gatilho != null)
+                        {
+                            AddLog($"[GATILHO ATIVADO] Comando: {gatilho.Comando} para {n}");
+                            
+                            if (!string.IsNullOrWhiteSpace(gatilho.Resposta) && !gatilho.TemAnexo)
+                            {
+                                _whatsappService.EnviarMensagem(n, gatilho.Resposta);
+                            }
+
+                            if (gatilho.TemAnexo)
+                            {
+                                for (int i = 0; i < gatilho.CaminhosArquivos.Count; i++)
+                                {
+                                    string legenda = (i == 0) ? gatilho.Resposta : "";
+                                    _whatsappService.EnviarAnexoGatilho(n, gatilho.CaminhosArquivos[i], legenda, gatilho.TipoMidiaAnexo);
+                                    if (gatilho.CaminhosArquivos.Count > 1) Thread.Sleep(1000); 
+                                }
+                            }
+                            return ("", "");
+                        }
+
+                        AddLog($"[IA] Sem gatilho para: '{msgLimpa}'. Enviando para Groq...");
+
+                        if (_aiAssistant == null) return ("", "");
+
+                        string aiContext = "";
+                        if (c == "AGENDAMENTO_TRIGGER")
+                        {
+                            var agora = DateTime.Now;
+                            var slots = _databaseService.GetHorariosDisponiveisMes(agora.Year, agora.Month)
+                                .Concat(_databaseService.GetHorariosDisponiveisMes(agora.AddMonths(1).Year, agora.AddMonths(1).Month))
+                                .Where(s => s > agora)
+                                .Take(8)
+                                .ToList();
+
+                            var fmt = slots.Select(s => $"• {s:dddd, dd/MM} às {s:HH:mm}").ToList();
+
+                            aiContext = "O cliente quer agendar. HORÁRIOS DISPONÍVEIS:\n" +
+                                        string.Join("\n", fmt) +
+                                        "\n\nSe o cliente confirmar um horário, responda estritamente com:\n" +
+                                        "[AGENDAR|nome:NOME|horario:YYYY-MM-DD HH:mm|servico:CONSULTA]";
+                        }
+
+                        AddLog("Consultando IA...");
+                        string respostaIA = _aiAssistant.GerarRespostaAsync(mensagemRecebida, aiContext, n).GetAwaiter().GetResult();
+                        return (respostaIA, _pendingAiFile);
+                    }
+                    catch (Exception ex) { AddLog($"Erro no Webhook Processor: {ex.Message}"); return ("", ""); }
+                }, AddLog);
+            }, AddLog);
+
             LoadSettings();
             LoadTriggers();
-            LoadAgendamentos();
-
-            // Inicia na tela de conexão
+            _mesAtual = DateTime.Today;
             SelectView("Connection");
         }
 
@@ -77,16 +182,12 @@ namespace BotWhatsappCSharp
             foreach (var a in _schedulingService.ListarAgendamentos()) Agendamentos.Add(a);
         }
 
-        // --- CONEXÃO ---
         private async void StartBtn_Click(object sender, RoutedEventArgs e)
         {
             if (_isConnecting) return;
-            if (StartBtn.Content.ToString() == "BOT LIGADO") { MessageBox.Show("Bot já conectado."); return; }
-
             _isConnecting = true;
             StartBtn.IsEnabled = false;
             StartBtn.Content = "CONECTANDO...";
-            StatusLabel.Text = "Status: Iniciando...";
 
             await _whatsappService.IniciarAsync(status =>
             {
@@ -95,13 +196,15 @@ namespace BotWhatsappCSharp
                     StatusLabel.Text = "Status: " + status;
                     if (status.Contains("Conectado"))
                     {
-                        StartBtn.Content = "BOT LIGADO";
+                        _whatsappService.SetConectado(true);
+                        StartBtn.Content = "CONECTADO À API";
                         StartBtn.Background = (Brush)FindResource("SuccessGreen");
                         StartBtn.IsEnabled = true;
-                        _whatsappService.LigarBot();
                         _isConnecting = false;
+                        
+                        if (!_botLoopActive) ToggleBot(); 
                     }
-                    else if (status.Contains("Erro") || status.Contains("Tempo limite") || status.Contains("aberto"))
+                    else if (status.Contains("Erro") || status.Contains("limite"))
                     {
                         StartBtn.Content = "TENTAR NOVAMENTE";
                         StartBtn.Background = (Brush)FindResource("DangerRed");
@@ -112,68 +215,59 @@ namespace BotWhatsappCSharp
             });
         }
 
-        private void ClearSession_Click(object sender, RoutedEventArgs e)
+        private void NavEvoSetup_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show("Isso irá desconectar o WhatsApp e limpar todos os dados do navegador local (resolvendo erros de banco de dados). Deseja continuar?", "Limpar Sessão", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            
-            if (result == MessageBoxResult.Yes)
+            var win = new Views.EvolutionSetupWindow(_databaseService);
+            if (win.ShowDialog() == true)
             {
-                try
-                {
-                    _whatsappService.Fechar();
-                    StatusLabel.Text = "Limpando processos...";
-                    
-                    // Encerrar processos que podem estar travando a pasta
-                    string[] processesToKill = { "chrome", "chromedriver" };
-                    foreach (var procName in processesToKill)
-                    {
-                        foreach (var process in System.Diagnostics.Process.GetProcessesByName(procName))
-                        {
-                            try { process.Kill(); process.WaitForExit(1000); } catch { }
-                        }
-                    }
-
-                    StatusLabel.Text = "Apagando pasta de sessão...";
-                    System.Threading.Thread.Sleep(1000); 
-
-                    if (System.IO.Directory.Exists(_sessionPath))
-                    {
-                        System.IO.Directory.Delete(_sessionPath, true);
-                    }
-                    
-                    MessageBox.Show("Sessão limpa com sucesso!\nO Chrome foi encerrado e a pasta foi resetada. Agora você pode Iniciar o Sistema novamente.");
-                    StatusLabel.Text = "Desconectado (Limpo)";
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Erro ao limpar sessão: " + ex.Message + "\nCertifique-se de fechar todos os navegadores abertos pelo bot manualmente se o erro persistir.");
-                }
+                MessageBox.Show("Configurações salvas! Reinicie o app para aplicar.");
             }
         }
 
-        // --- NAVEGAÇÃO ---
-        private void NavConnect_Click(object sender, RoutedEventArgs e) => SelectView("Connection");
-        private void NavAI_Click(object sender, RoutedEventArgs e) => SelectView("AI");
-        private void NavBulk_Click(object sender, RoutedEventArgs e) => SelectView("Bulk");
-        private void NavTriggers_Click(object sender, RoutedEventArgs e) => SelectView("Triggers");
-        private void NavSchedule_Click(object sender, RoutedEventArgs e) => SelectView("Schedule");
-        private void NavTickets_Click(object sender, RoutedEventArgs e) 
-        { 
-            SelectView("Tickets"); 
-            TemNovoChamado = false; 
+        private void ToggleBot()
+        {
+            _botLoopActive = !_botLoopActive;
+            Application.Current.Dispatcher.Invoke(() => {
+                if (_botLoopActive)
+                {
+                    AiToggleBtn.Content = "PARAR ATENDIMENTO";
+                    AiToggleBtn.Background = (Brush)FindResource("DangerRed");
+                    AiStatusLabel.Text = "STATUS: ATIVO E ESCUTANDO WEBHOOK";
+                    AiStatusLabel.Foreground = (Brush)FindResource("SuccessGreen");
+                    AddLog("Atendimento inteligente ativado.");
+                }
+                else
+                {
+                    AiToggleBtn.Content = "LIGAR ATENDIMENTO AUTOMÁTICO";
+                    AiToggleBtn.Background = (Brush)FindResource("BrandYellow");
+                    AiStatusLabel.Text = "STATUS: PARADO";
+                    AiStatusLabel.Foreground = (Brush)FindResource("DangerRed");
+                    AddLog("Atendimento inteligente desativado.");
+                }
+
+                if (_botLoopActive && !_webhookServer.IsAtivo())
+                {
+                    _webhookServer.Iniciar();
+                }
+            });
+        }
+
+        private void AiToggle_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_whatsappService.IsDriverAtivo()) { MessageBox.Show("Conecte à Evolution API primeiro."); return; }
+            ToggleBot();
         }
 
         private void SelectView(string viewName)
         {
-            // Reset Buttons (SaaS Style)
             BtnNavConnect.Background = Brushes.Transparent; BtnNavConnect.Foreground = (Brush)FindResource("TextGray");
             BtnNavAI.Background = Brushes.Transparent; BtnNavAI.Foreground = (Brush)FindResource("TextGray");
             BtnNavBulk.Background = Brushes.Transparent; BtnNavBulk.Foreground = (Brush)FindResource("TextGray");
             BtnNavTriggers.Background = Brushes.Transparent; BtnNavTriggers.Foreground = (Brush)FindResource("TextGray");
             BtnNavTickets.Background = Brushes.Transparent; BtnNavTickets.Foreground = (Brush)FindResource("TextGray");
+            BtnNavEvoSetup.Background = Brushes.Transparent; BtnNavEvoSetup.Foreground = (Brush)FindResource("TextGray");
             if (BtnNavSchedule != null) { BtnNavSchedule.Background = Brushes.Transparent; BtnNavSchedule.Foreground = (Brush)FindResource("TextGray"); }
 
-            // Hide All
             ViewConnection.Visibility = Visibility.Collapsed;
             ViewAI.Visibility = Visibility.Collapsed;
             ViewBulk.Visibility = Visibility.Collapsed;
@@ -181,526 +275,421 @@ namespace BotWhatsappCSharp
             ViewTickets.Visibility = Visibility.Collapsed;
             if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Collapsed;
 
-            // Activate Selected
             switch (viewName)
             {
-                case "Connection":
-                    ViewConnection.Visibility = Visibility.Visible;
-                    BtnNavConnect.Background = (Brush)FindResource("BorderColor");
-                    BtnNavConnect.Foreground = (Brush)FindResource("BrandPrimary");
-                    break;
-                case "AI":
-                    ViewAI.Visibility = Visibility.Visible;
-                    BtnNavAI.Background = (Brush)FindResource("BorderColor");
-                    BtnNavAI.Foreground = (Brush)FindResource("BrandPrimary");
-                    break;
-                case "Bulk":
-                    ViewBulk.Visibility = Visibility.Visible;
-                    BtnNavBulk.Background = (Brush)FindResource("BorderColor");
-                    BtnNavBulk.Foreground = (Brush)FindResource("BrandPrimary");
-                    break;
-                case "Triggers":
-                    ViewTriggers.Visibility = Visibility.Visible;
-                    BtnNavTriggers.Background = (Brush)FindResource("BorderColor");
-                    BtnNavTriggers.Foreground = (Brush)FindResource("BrandPrimary");
-                    break;
-                case "Tickets":
-                    ViewTickets.Visibility = Visibility.Visible;
-                    BtnNavTickets.Background = (Brush)FindResource("BorderColor");
-                    BtnNavTickets.Foreground = (Brush)FindResource("BrandPrimary");
-                    break;
-                case "Schedule":
-                    if (ViewSchedule != null) ViewSchedule.Visibility = Visibility.Visible;
-                    if (BtnNavSchedule != null) {
-                        BtnNavSchedule.Background = (Brush)FindResource("BorderColor");
-                        BtnNavSchedule.Foreground = (Brush)FindResource("BrandPrimary");
-                    }
-                    LoadAgendamentos();
-                    break;
+                case "Connection": ViewConnection.Visibility = Visibility.Visible; BtnNavConnect.Background = (Brush)FindResource("BorderColor"); break;
+                case "AI": ViewAI.Visibility = Visibility.Visible; BtnNavAI.Background = (Brush)FindResource("BorderColor"); break;
+                case "Bulk": ViewBulk.Visibility = Visibility.Visible; BtnNavBulk.Background = (Brush)FindResource("BorderColor"); break;
+                case "Triggers": ViewTriggers.Visibility = Visibility.Visible; BtnNavTriggers.Background = (Brush)FindResource("BorderColor"); break;
+                case "Tickets": ViewTickets.Visibility = Visibility.Visible; BtnNavTickets.Background = (Brush)FindResource("BorderColor"); break;
+                case "Schedule": ViewSchedule.Visibility = Visibility.Visible; BtnNavSchedule.Background = (Brush)FindResource("BorderColor"); RenderizarCalendario(); break;
+                case "Evo": BtnNavEvoSetup.Background = (Brush)FindResource("BorderColor"); break;
             }
         }
 
-        private void AddLog(string msg)
-        {
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                string time = DateTime.Now.ToString("HH:mm:ss");
-                LogList.Items.Insert(0, $"[{time}] {msg}");
-                if (LogList.Items.Count > 100) LogList.Items.RemoveAt(100);
-            });
-            // Log to file as well
-            Logger.Log(msg);
-        }
+        private void NavConnect_Click(object sender, RoutedEventArgs e) => SelectView("Connection");
+        private void NavAI_Click(object sender, RoutedEventArgs e) => SelectView("AI");
+        private void NavBulk_Click(object sender, RoutedEventArgs e) => SelectView("Bulk");
+        private void NavTriggers_Click(object sender, RoutedEventArgs e) => SelectView("Triggers");
+        private void NavSchedule_Click(object sender, RoutedEventArgs e) => SelectView("Schedule");
+        private void NavTickets_Click(object sender, RoutedEventArgs e) { SelectView("Tickets"); TemNovoChamado = false; }
 
-        private void SaveSettings()
-        {
-            try
-            {
-                        var settings = new SettingsModel
-                        {
-                            ApiKey = ApiKeyInput.Text,
-                            SystemPrompt = SystemPromptInput.Text + "\n\nDIRETRIZES DE HUMANIZAÇÃO:\n- Use empatia contextual.\n- Varie o vocabulário.\n- Use confirmação ativa (ex: 'Prontinho! Reservei seu horário...').",
-                            AiMediaFile = _pendingAiFile,
-                            BulkMediaFile = _pendingBulkFile
-                        };
-                string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_settingsPath, json);
-            }
-            catch (Exception ex)
-            {
-                AddLog("Erro ao salvar configurações: " + ex.Message);
-            }
-        }
+        private void AddLog(string msg) { Application.Current.Dispatcher.Invoke(() => { LogList.Items.Insert(0, $"[{DateTime.Now:HH:mm:ss}] {msg}"); if (LogList.Items.Count > 100) LogList.Items.RemoveAt(100); }); Logger.Log(msg); }
 
         private void LoadSettings()
         {
+            var settings = _databaseService.CarregarSettings();
+            ApiKeyInput.Text = settings.ApiKey; SystemPromptInput.Text = settings.SystemPrompt;
+            _pendingAiFile = settings.AiMediaFile ?? ""; TxtAiFileName.Text = string.IsNullOrEmpty(_pendingAiFile) ? "Nenhum arquivo" : Path.GetFileName(_pendingAiFile);
+            _aiAssistant = new AiAssistant(settings.ApiKey, settings.SystemPrompt, _databaseService);
+        }
+
+        private void SaveAI_Click(object sender, RoutedEventArgs e) { _aiAssistant = new AiAssistant(ApiKeyInput.Text.Trim(), SystemPromptInput.Text.Trim(), _databaseService); SaveSettings(); MessageBox.Show("Configurações salvas!"); }
+        private void SaveSettings() { try { var settings = new SettingsModel { ApiKey = ApiKeyInput.Text, SystemPrompt = SystemPromptInput.Text, AiMediaFile = _pendingAiFile }; _databaseService.SalvarSettings(settings); } catch { } }
+
+        private void PickTriggerFile_Click(object sender, RoutedEventArgs e)
+        {
+            var ofd = new OpenFileDialog { Multiselect = true };
+            int tipo = CmbTipoMidia.SelectedIndex;
+            ofd.Filter = tipo switch {
+                1 => "Imagens|*.jpg;*.jpeg;*.png;*.gif;*.webp",
+                2 => "PDF|*.pdf",
+                3 => "Áudio|*.mp3;*.ogg;*.opus;*.aac",
+                4 => "Vídeo|*.mp4;*.avi;*.mov",
+                _ => "Todos os arquivos|*.*"
+            };
+            
+            if (ofd.ShowDialog() == true)
+            {
+                _pendingTriggerFiles.Clear();
+                _pendingTriggerFiles.AddRange(ofd.FileNames);
+                TxtFileName.Text = _pendingTriggerFiles.Count == 1 ? Path.GetFileName(_pendingTriggerFiles[0]) : $"{_pendingTriggerFiles.Count} arquivo(s)";
+            }
+        }
+
+        private void PickAiFile_Click(object sender, RoutedEventArgs e) { OpenFileDialog ofd = new OpenFileDialog(); if (ofd.ShowDialog() == true) { _pendingAiFile = ofd.FileName; TxtAiFileName.Text = Path.GetFileName(_pendingAiFile); SaveSettings(); } }
+        
+        private void AddTrigger_Click(object sender, RoutedEventArgs e) 
+        { 
+            string cmd = TriggerCmdInput.Text;
+            string resp = TriggerRespInput.Text;
+            var novo = new GatilhoModel { 
+                Comando = cmd, 
+                Resposta = resp, 
+                CaminhosArquivos = new List<string>(_pendingTriggerFiles),
+                TipoMidiaAnexo = CmbTipoMidia.SelectedIndex switch {
+                    1 => TipoMidia.Imagem,
+                    2 => TipoMidia.PDF,
+                    3 => TipoMidia.Audio,
+                    4 => TipoMidia.Video,
+                    _ => TipoMidia.Nenhum
+                }
+            }; 
+            if (_databaseService.SalvarGatilho(novo)) { 
+                Gatilhos.Add(novo); 
+                TriggerCmdInput.Clear(); 
+                TriggerRespInput.Clear(); 
+                _pendingTriggerFiles.Clear(); 
+                TxtFileName.Text = "Nenhum arquivo"; 
+                CmbTipoMidia.SelectedIndex = 0;
+            } 
+        }
+
+        private void LoadTriggers() { var list = _databaseService.ListarGatilhos(); Gatilhos.Clear(); foreach (var item in list) Gatilhos.Add(item); }
+        private void RemoveTrigger_Click(object sender, RoutedEventArgs e) { if (sender is Button btn && btn.DataContext is GatilhoModel g) { if (MessageBox.Show($"Excluir '{g.Comando}'?", "Confirmação", MessageBoxButton.YesNo) == MessageBoxResult.Yes) { if (_databaseService.RemoverGatilho(g.Comando)) Gatilhos.Remove(g); } } }
+
+        public void ResponderTicket_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn) return;
+            string numero = btn.Tag?.ToString() ?? "";
+            if (string.IsNullOrEmpty(numero)) return;
+
+            var parent = btn.Parent as Grid;
+            if (parent == null) return;
+            
+            var txtBox = parent.Children.OfType<TextBox>().FirstOrDefault();
+            string mensagem = txtBox?.Text.Trim() ?? "";
+
+            if (string.IsNullOrEmpty(mensagem)) { MessageBox.Show("Digite uma mensagem para enviar."); return; }
+            if (!_whatsappService.IsDriverAtivo()) { MessageBox.Show("WhatsApp não está conectado."); return; }
+
             try
             {
-                if (File.Exists(_settingsPath))
-                {
-                    string json = File.ReadAllText(_settingsPath);
-                    var settings = JsonSerializer.Deserialize<SettingsModel>(json);
-                    if (settings != null)
-                    {
-                        ApiKeyInput.Text = settings.ApiKey;
-                        SystemPromptInput.Text = settings.SystemPrompt;
-                        
-                        _pendingAiFile = settings.AiMediaFile;
-                        TxtAiFileName.Text = string.IsNullOrEmpty(_pendingAiFile) ? "Nenhum arquivo" : Path.GetFileName(_pendingAiFile);
-                        
-                        _pendingBulkFile = settings.BulkMediaFile;
-                        TxtBulkFileName.Text = string.IsNullOrEmpty(_pendingBulkFile) ? "Nenhum arquivo" : Path.GetFileName(_pendingBulkFile);
-
-                        if (!string.IsNullOrEmpty(settings.ApiKey))
-                        {
-                            _aiAssistant = new AiAssistant(settings.ApiKey, settings.SystemPrompt);
-                        }
-                    }
-                }
-                
-                if (_aiAssistant == null)
-                    _aiAssistant = new AiAssistant("", "Você é um assistente virtual útil e educado.");
-
-                // Adiciona gatilho padrão se vazio
-                if (Gatilhos.Count == 0)
-                {
-                    Gatilhos.Add(new GatilhoModel { Comando = "/ajuda", Resposta = "Olá! Digite /preço ou /info." });
-                }
+                _whatsappService.EnviarMensagem(numero, mensagem);
+                AddLog($"[ATENDENTE] Respondeu {numero}: {mensagem.Substring(0, Math.Min(30, mensagem.Length))}...");
+                if (txtBox != null) txtBox.Clear();
+                var chamado = ChamadosAbertos.FirstOrDefault(c => c.Numero == numero);
+                if (chamado != null) chamado.Respondido = true;
             }
-            catch (Exception ex)
+            catch (Exception ex) { MessageBox.Show($"Erro ao enviar: {ex.Message}"); }
+        }
+
+        private void ResolveTicket_Click(object sender, RoutedEventArgs e) 
+        { 
+            if (sender is not Button btn) return;
+            string numero = btn.Tag?.ToString() ?? "";
+            var chamado = ChamadosAbertos.FirstOrDefault(c => c.Numero == numero);
+            if (chamado == null) return;
+
+            var result = MessageBox.Show($"Concluir atendimento de {chamado.Nome} ({numero})?", "Confirmar", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
             {
-                AddLog("Erro ao carregar configurações: " + ex.Message);
-                _aiAssistant = new AiAssistant("", "Você é um assistente virtual útil e educado.");
+                ChamadosAbertos.Remove(chamado);
+                AddLog($"[TICKET] Atendimento de {numero} concluído.");
+                if (ChamadosAbertos.Count == 0) TemNovoChamado = false;
             }
         }
 
-        // --- IA & BOT LOOP ---
-        private void SaveAI_Click(object sender, RoutedEventArgs e)
-        {
-            string key = ApiKeyInput.Text.Trim();
-            string prompt = SystemPromptInput.Text.Trim();
-            
-            if (string.IsNullOrEmpty(key)) { MessageBox.Show("Insira uma API Key do Groq."); return; }
-
-            _aiAssistant = new AiAssistant(key, prompt);
-            SaveSettings();
-            MessageBox.Show("Configurações salvas permanentemente!");
+        private void ImportContacts_Click(object sender, RoutedEventArgs e) 
+        { 
+            try {
+                OpenFileDialog ofd = new OpenFileDialog { Filter = "Arquivos de Texto (*.txt;*.csv)|*.txt;*.csv" }; 
+                if (ofd.ShowDialog() == true) { BulkNumbersInput.Text = File.ReadAllText(ofd.FileName); } 
+            } catch (Exception ex) { MessageBox.Show("Erro ao importar contatos: " + ex.Message); }
         }
-
-        private void AiToggle_Click(object sender, RoutedEventArgs e)
-        {
-            ToggleBot();
-        }
-
-        private void ToggleBot()
-        {
-            if (!_whatsappService.IsDriverAtivo()) { MessageBox.Show("Conecte o WhatsApp primeiro."); return; }
-
-            if (!_botLoopActive)
-            {
-                // Iniciar
-                _botLoopActive = true;
-                AiToggleBtn.Content = "PARAR ATENDIMENTO";
-                AiToggleBtn.Background = (Brush)FindResource("DangerRed");
-                AiStatusLabel.Text = "STATUS: ATIVO E OUVINDO";
-                AiStatusLabel.Foreground = (Brush)FindResource("SuccessGreen");
-                
-                _cancellationTokenSource = new CancellationTokenSource();
-                Task.Run(() => RunBotLoop(_cancellationTokenSource.Token));
-            }
-            else
-            {
-                // Parar
-                _botLoopActive = false;
-                _cancellationTokenSource?.Cancel();
-                AiToggleBtn.Content = "LIGAR ATENDIMENTO AUTOMÁTICO";
-                AiToggleBtn.Background = (Brush)FindResource("BrandYellow");
-                AiStatusLabel.Text = "STATUS: PARADO";
-                AiStatusLabel.Foreground = (Brush)FindResource("DangerRed");
-            }
-        }
-        private async Task RunBotLoop(CancellationToken token)
-        {
-            while (!token.IsCancellationRequested && _botLoopActive)
-            {
-                try
-                {
-                    Application.Current.Dispatcher.Invoke(() => AiStatusLabel.Text = "STATUS: MONITORANDO...");
-                    
-                    await Task.Run(() => 
-                    {
-	                        _whatsappService.ProcessarMensagensNaoLidas((numeroTelefone, mensagemRecebida, audioData, context) =>
-	                        {
-	                            try
-	                            {
-	                                // Se houver áudio, transcreve antes de prosseguir
-	                                if (audioData != null && _aiAssistant != null)
-	                                {
-	                                    AddLog("Transcrita áudio recebido...");
-	                                    mensagemRecebida = _aiAssistant.TranscreverAudioAsync(audioData).GetAwaiter().GetResult();
-	                                    AddLog($"[TRANSCRICAO] {mensagemRecebida}");
-	                                }
-	
-	                                if (string.IsNullOrWhiteSpace(mensagemRecebida)) return ("", "");
-	
-	                                AddLog($"[{numeroTelefone}] Mensagem: {mensagemRecebida}");
-	                                
-	                                // 0. Verifica se é pedido de atendente
-	                                string[] termosAtendente = { "atendente", "humano", "pessoa", "falar com alguém", "atendimento", "suporte", "ajuda", "vendedor", "falar com pessoa", "human" };
-	                                if (termosAtendente.Any(t => mensagemRecebida.ToLower().Contains(t)))
-	                                {
-	                                    AddLog($"Pedido de atendente detectado de {numeroTelefone}!");
-	                                    Application.Current.Dispatcher.Invoke(() => {
-	                                        if (!ChamadosAbertos.Any(c => c.Numero == numeroTelefone)) {
-	                                            ChamadosAbertos.Add(new ChamadoModel { 
-	                                                Numero = numeroTelefone, 
-	                                                UltimaMensagem = mensagemRecebida,
-	                                                Horario = DateTime.Now
-	                                            });
-	                                            TemNovoChamado = true;
-	                                        }
-	                                    });
-	                                    return ("Um atendente humano foi notificado e logo falará com você. Aguarde um momento.", "");
-	                                }
-	
-	                                // 1. Verifica Gatilhos
-	                                string msgLimpa = mensagemRecebida.Trim().ToLower();
-	                                var gatilho = Gatilhos.FirstOrDefault(g => 
-	                                {
-	                                    string cmd = g.Comando.Trim().ToLower();
-	                                    if (cmd.StartsWith("/")) return msgLimpa == cmd || msgLimpa.StartsWith(cmd + " ");
-	                                    return msgLimpa.Contains(cmd);
-	                                });
-	                                
-	                                if (gatilho != null)
-	                                {
-	                                    AddLog($"[GATILHO] Comando '{gatilho.Comando}' detectado.");
-	                                    return (gatilho.Resposta, string.Join("|", gatilho.CaminhosArquivos ?? new System.Collections.Generic.List<string>()));
-	                                }
-	
-	                                // 2. Se não tem gatilho, usa IA
-	                                if (_aiAssistant == null) {
-	                                    AddLog("IA não configurada!");
-	                                    return ("", "");
-	                                }
-	
-	                                string aiContext = "";
-	                                if (context == "AGENDAMENTO_TRIGGER")
-	                                {
-	                                    var slots = _schedulingService.GetHorariosDisponiveis(DateTime.Now.AddDays(1));
-	                                    aiContext = "HORÁRIOS DISPONÍVEIS PARA AMANHÃ:\n" + string.Join("\n", slots.Take(5).Select(s => s.ToString("HH:mm")));
-	                                    aiContext += "\nSe o usuário escolher, peça o nome para confirmar.";
-	                                }
-	
-	                                AddLog("Consultando IA...");
-	                                string resposta = _aiAssistant.GerarRespostaAsync(mensagemRecebida, aiContext).GetAwaiter().GetResult();
-	                                
-	                                // Lógica de Confirmação de Agendamento
-	                                if (resposta.ToLower().Contains("confirmado") && (msgLimpa.Contains(":") || msgLimpa.Contains("h")))
-	                                {
-	                                    AddLog($"Agendamento detectado para {numeroTelefone}");
-	                                }
-	
-	                                AddLog("IA respondeu com sucesso.");
-	                                return (resposta, _pendingAiFile);
-	                            }
-	                            catch (Exception ex)
-	                            {
-	                                string errorMsg = ex.InnerException?.Message ?? ex.Message;
-	                                AddLog($"ERRO: {errorMsg}");
-	                                return ("", ""); 
-	                            }
-	                        }, AddLog);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("[ERRO LOOP] " + ex.Message);
-                }
-
-                await Task.Delay(3000); // Espera antes do próximo ciclo
-            }
-        }
-
-        // --- DISPARO EM MASSA ---
-        private void ImportContacts_Click(object sender, RoutedEventArgs e)
-        {
-            OpenFileDialog openFileDialog = new OpenFileDialog
-            {
-                Filter = "Arquivos de Texto/CSV (*.txt;*.csv)|*.txt;*.csv|Todos os arquivos (*.*)|*.*"
-            };
-
-            if (openFileDialog.ShowDialog() == true)
-            {
-                try
-                {
-                    string content = File.ReadAllText(openFileDialog.FileName);
-                    // Tenta limpar e formatar
-                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    BulkNumbersInput.Text = string.Join(Environment.NewLine, lines);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Erro ao ler arquivo: " + ex.Message);
-                }
-            }
-        }
-
-        private CancellationTokenSource _bulkCts;
 
         private void DownloadTemplate_Click(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                string template = "Telefone;Nome\n5511999999999;João Exemplo\n5511888888888;Maria Exemplo";
-                SaveFileDialog sfd = new SaveFileDialog
-                {
-                    Filter = "Arquivo CSV (*.csv)|*.csv",
-                    FileName = "modelo_contatos.csv"
-                };
+            MessageBox.Show("Formato esperado: Um número de telefone por linha.\nExemplo:\n5511999999999\n5511888888888");
+        }
 
-                if (sfd.ShowDialog() == true)
-                {
-                    File.WriteAllText(sfd.FileName, template);
-                    MessageBox.Show("Modelo salvo com sucesso! No disparo, carregue este arquivo ou cole os números (um por linha).");
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Erro ao criar modelo: " + ex.Message);
-            }
+        private CancellationTokenSource? _bulkCts;
+
+        private void BtnBulkImagem_Click(object sender, RoutedEventArgs e)
+        {
+            var ofd = new OpenFileDialog { Filter = "Imagens|*.jpg;*.jpeg;*.png;*.gif;*.webp", Title = "Selecionar imagem da campanha" };
+            if (ofd.ShowDialog() == true) { _bulkMidiaPath = ofd.FileName; _bulkTipoMidia = TipoMidia.Imagem; AtualizarBulkMidiaUI(); }
+        }
+
+        private void BtnBulkPDF_Click(object sender, RoutedEventArgs e)
+        {
+            var ofd = new OpenFileDialog { Filter = "PDF|*.pdf", Title = "Selecionar PDF da campanha" };
+            if (ofd.ShowDialog() == true) { _bulkMidiaPath = ofd.FileName; _bulkTipoMidia = TipoMidia.PDF; AtualizarBulkMidiaUI(); }
+        }
+
+        private void BtnBulkAudio_Click(object sender, RoutedEventArgs e)
+        {
+            var ofd = new OpenFileDialog { Filter = "Áudio|*.mp3;*.ogg;*.opus;*.aac", Title = "Selecionar áudio da campanha" };
+            if (ofd.ShowDialog() == true) { _bulkMidiaPath = ofd.FileName; _bulkTipoMidia = TipoMidia.Audio; AtualizarBulkMidiaUI(); }
+        }
+
+        private void BtnBulkRemoverMidia_Click(object sender, RoutedEventArgs e)
+        {
+            _bulkMidiaPath = ""; _bulkTipoMidia = TipoMidia.Nenhum; TxtBulkMidiaInfo.Text = "Nenhuma mídia selecionada";
+            TxtBulkMidiaInfo.FontStyle = FontStyles.Italic; BtnBulkRemoverMidia.Visibility = Visibility.Collapsed;
+        }
+
+        private void AtualizarBulkMidiaUI()
+        {
+            string icone = _bulkTipoMidia switch { TipoMidia.Imagem => "🖼️", TipoMidia.PDF => "📄", TipoMidia.Audio => "🎵", _ => "📎" };
+            string nome = Path.GetFileName(_bulkMidiaPath);
+            long tamanho = new FileInfo(_bulkMidiaPath).Length / 1024;
+            TxtBulkMidiaInfo.Text = $"{icone} {nome} ({tamanho} KB)";
+            TxtBulkMidiaInfo.FontStyle = FontStyles.Normal; BtnBulkRemoverMidia.Visibility = Visibility.Visible;
         }
 
         private async void StartBulk_Click(object sender, RoutedEventArgs e)
         {
-            string msg = BulkMessageInput.Text;
+            string msg = BulkMessageInput.Text.Trim();
             string[] numbers = BulkNumbersInput.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-            if (string.IsNullOrWhiteSpace(msg) || numbers.Length == 0) { MessageBox.Show("Preencha a mensagem e a lista de contatos."); return; }
+            if (numbers.Length == 0) { MessageBox.Show("Adicione pelo menos um número."); return; }
+            if (string.IsNullOrWhiteSpace(msg) && string.IsNullOrEmpty(_bulkMidiaPath)) { MessageBox.Show("Preencha a mensagem ou selecione uma mídia."); return; }
 
-            // Obter delays da UI
             if (!int.TryParse(BulkDelayMin.Text, out int delayMin)) delayMin = 5;
             if (!int.TryParse(BulkDelayMax.Text, out int delayMax)) delayMax = 15;
-            
-            // BLOQUEIO DE CONCORRÊNCIA: Desativa bot se estiver rodando
+
             bool restartBot = false;
-            if (_botLoopActive) 
-            {
-                AddLog("⚠ Pausando Bot de Atendimento para iniciar disparo em massa...");
-                ToggleBot(); // Uso correto método direto
-                restartBot = true;
-                await Task.Delay(2000); // Wait for cancellation
-            }
+            if (_botLoopActive) { AddLog("Pausando atendimento para disparo..."); ToggleBot(); restartBot = true; await Task.Delay(2000); }
 
-            // Bloqueio de UI
             StartBulkBtn.IsEnabled = false;
-            ImportContactsBtn.IsEnabled = false;
-
+            BulkProgressBar.Maximum = numbers.Length;
+            BulkProgressBar.Value = 0;
             _bulkCts = new CancellationTokenSource();
-            BulkStatusLabel.Text = "🚀 Iniciando disparo stealth...";
 
             await Task.Run(async () =>
             {
                 int count = 0;
-                Random rand = new Random();
-
-                foreach (var num in numbers)
+                var rand = new Random();
+                foreach (var numero in numbers)
                 {
                     if (_bulkCts.Token.IsCancellationRequested) break;
+                    string num = numero.Trim();
+                    if (string.IsNullOrEmpty(num)) continue;
 
-                    Application.Current.Dispatcher.Invoke(() => BulkStatusLabel.Text = $"Enviando {count + 1}/{numbers.Length} para {num.Trim()}...");
-                    
-                    // Enviar com legenda se houver anexo, senão envia apenas texto
-                    if (!string.IsNullOrEmpty(_pendingBulkFile))
-                    {
-                        _whatsappService.EnviarAnexo(_pendingBulkFile, msg);
-                    }
-                    else
-                    {
-                        _whatsappService.EnviarMensagem(num.Trim(), msg);
-                    }
+                    Application.Current.Dispatcher.Invoke(() => {
+                        BulkStatusLabel.Text = $"Enviando {count + 1}/{numbers.Length} → {num}";
+                        BulkProgressBar.Value = count;
+                        BulkProgressLabel.Text = $"{count + 1} de {numbers.Length} ({(int)((count + 1.0) / numbers.Length * 100)}%)";
+                    });
 
-                    count++;
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(_bulkMidiaPath)) _whatsappService.EnviarAnexoGatilho(num, _bulkMidiaPath, msg, _bulkTipoMidia);
+                        else _whatsappService.EnviarMensagem(num, msg);
+                        count++;
+                    }
+                    catch (Exception ex) { AddLog($"Erro ao enviar para {num}: {ex.Message}"); }
 
                     if (count < numbers.Length)
                     {
-                        // Delay randômico entre as mensagens
                         int delay = rand.Next(delayMin * 1000, delayMax * 1000);
-                        
-                        // Pausa extra a cada 10 mensagens (Anti-Ban)
-                        if (count % 10 == 0) {
-                            Application.Current.Dispatcher.Invoke(() => BulkStatusLabel.Text = $"Pausa de segurança (Anti-Ban)...");
-                            delay += rand.Next(10000, 20000); 
-                        }
-
-                        await Task.Delay(delay);
+                        if (count % 10 == 0) { Application.Current.Dispatcher.Invoke(() => BulkStatusLabel.Text = "Pausa de segurança anti-ban..."); delay += rand.Next(10000, 20000); }
+                        await Task.Delay(delay, _bulkCts.Token).ContinueWith(_ => { });
                     }
                 }
-                Application.Current.Dispatcher.Invoke(() => 
-                {
-                    BulkStatusLabel.Text = "✅ Disparo Stealth Finalizado!";
+
+                Application.Current.Dispatcher.Invoke(() => {
+                    BulkStatusLabel.Text = $"✅ Concluído! {count}/{numbers.Length} enviados.";
+                    BulkProgressBar.Value = numbers.Length;
+                    BulkProgressLabel.Text = "100% concluído";
                     StartBulkBtn.IsEnabled = true;
-                    ImportContactsBtn.IsEnabled = true;
-
-                    if (restartBot)
-                    {
-                        AddLog("🔄 Reativando Bot de Atendimento...");
-                        ToggleBot();
-                    }
+                    if (restartBot) { AddLog("Reativando atendimento automático..."); ToggleBot(); }
                 });
-            });
+            }, _bulkCts.Token);
         }
 
-        private void StopBulk_Click(object sender, RoutedEventArgs e)
-        {
-            _bulkCts?.Cancel();
-            BulkStatusLabel.Text = "Parando...";
-        }
+        private void StopBulk_Click(object sender, RoutedEventArgs e) => _bulkCts?.Cancel();
 
-        // --- GATILHOS ---
-        private void PickTriggerFile_Click(object sender, RoutedEventArgs e)
+        // --- LÓGICA DO CALENDÁRIO ---
+        private void RenderizarCalendario()
         {
-            OpenFileDialog ofd = new OpenFileDialog();
-            ofd.Multiselect = true;
-            if (ofd.ShowDialog() == true)
+            if (CalendarioGrid == null) return;
+            CalendarioGrid.Children.Clear();
+
+            // Atualiza label do mês
+            TxtMesAtual.Text = _mesAtual.ToString("MMMM yyyy", new System.Globalization.CultureInfo("pt-BR")).ToUpper();
+
+            // Cabeçalho dos dias da semana
+            string[] dias = { "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb" };
+            foreach (var d in dias)
             {
-                _pendingTriggerFiles.AddRange(ofd.FileNames);
-                TxtFileName.Text = $"{_pendingTriggerFiles.Count} arquivo(s) selecionado(s)";
-            }
-        }
-
-        private void PickAiFile_Click(object sender, RoutedEventArgs e)
-        {
-            OpenFileDialog ofd = new OpenFileDialog();
-            if (ofd.ShowDialog() == true)
-            {
-                _pendingAiFile = ofd.FileName;
-                TxtAiFileName.Text = Path.GetFileName(_pendingAiFile);
-                SaveSettings();
-            }
-        }
-
-        private void PickBulkFile_Click(object sender, RoutedEventArgs e)
-        {
-            OpenFileDialog ofd = new OpenFileDialog();
-            if (ofd.ShowDialog() == true)
-            {
-                _pendingBulkFile = ofd.FileName;
-                TxtBulkFileName.Text = Path.GetFileName(_pendingBulkFile);
-                SaveSettings();
-            }
-        }
-
-        private void AddTrigger_Click(object sender, RoutedEventArgs e)
-        {
-            string cmd = TriggerCmdInput.Text.Trim();
-            string resp = TriggerRespInput.Text.Trim();
-
-            if (!string.IsNullOrEmpty(cmd) && !string.IsNullOrEmpty(resp))
-            {
-                // Removida a adição automática de '/' para permitir palavras-chave livres
-                Gatilhos.Add(new GatilhoModel { 
-                    Comando = cmd, 
-                    Resposta = resp, 
-                    CaminhosArquivos = new System.Collections.Generic.List<string>(_pendingTriggerFiles) 
+                CalendarioGrid.Children.Add(new TextBlock
+                {
+                    Text = d,
+                    FontWeight = FontWeights.Bold,
+                    FontSize = 11,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128))
                 });
-                
-                SaveTriggers();
-                
-                TriggerCmdInput.Clear();
-                TriggerRespInput.Clear();
-                _pendingTriggerFiles.Clear();
-                TxtFileName.Text = "Nenhum arquivo";
             }
-            else
-            {
-                MessageBox.Show("Preencha o Comando e a Resposta.");
-            }
-        }
 
-        private void SaveTriggers()
-        {
-            try
-            {
-                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotZapAI", "triggers.json");
-                string json = JsonSerializer.Serialize(Gatilhos, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(path, json);
-            }
-            catch (Exception ex)
-            {
-                AddLog("Erro ao salvar gatilhos: " + ex.Message);
-            }
-        }
+            // Carrega slots do banco
+            _slotsDoMes = _databaseService.ListarSlotsMes(_mesAtual.Year, _mesAtual.Month);
 
-        private void LoadTriggers()
-        {
-            try
+            // Primeiro dia do mês e deslocamento
+            var primeiroDia = new DateTime(_mesAtual.Year, _mesAtual.Month, 1);
+            int offsetInicio = (int)primeiroDia.DayOfWeek;
+
+            // Células vazias antes do dia 1
+            for (int i = 0; i < offsetInicio; i++)
+                CalendarioGrid.Children.Add(new Border());
+
+            // Dias do mês
+            int totalDias = DateTime.DaysInMonth(_mesAtual.Year, _mesAtual.Month);
+
+            for (int dia = 1; dia <= totalDias; dia++)
             {
-                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotZapAI", "triggers.json");
-                if (File.Exists(path))
+                var dataAtual = new DateTime(_mesAtual.Year, _mesAtual.Month, dia);
+                bool isPast = dataAtual.Date < DateTime.Today;
+                bool isHoje = dataAtual.Date == DateTime.Today;
+
+                // Conta slots do dia
+                var slotsDia = _slotsDoMes.Where(s => s.DataHora.Date == dataAtual.Date).ToList();
+                int disponiveis = slotsDia.Count(s => s.Disponivel);
+                int agendados = slotsDia.Count(s => !s.Disponivel && !string.IsNullOrEmpty(s.AgendadoPor));
+
+                // Cor do card do dia
+                string bgHex = "#F9FAFB"; // Padrão vazio
+                if (agendados > 0 && disponiveis == 0)
+                    bgHex = "#FEE2E2"; // Vermelho — Tudo agendado
+                else if (disponiveis > 0)
+                    bgHex = "#D1FAE5"; // Verde — Tem disponível
+                else if (agendados > 0)
+                    bgHex = "#FEF3C7"; // Amarelo — Misto/Agendado s/ disponibilidade aberta
+
+                var cardDia = new Border
                 {
-                    string json = File.ReadAllText(path);
-                    var list = JsonSerializer.Deserialize<System.Collections.Generic.List<GatilhoModel>>(json);
-                    if (list != null)
+                    Margin = new Thickness(2),
+                    Padding = new Thickness(4),
+                    CornerRadius = new CornerRadius(6),
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(bgHex)),
+                    BorderThickness = new Thickness(isHoje ? 2 : 0.5),
+                    BorderBrush = new SolidColorBrush(isHoje ? Color.FromRgb(37, 99, 235) : Color.FromRgb(229, 231, 235)),
+                    Cursor = isPast ? Cursors.Arrow : Cursors.Hand,
+                    Tag = dataAtual
+                };
+
+                var stackDia = new StackPanel();
+                stackDia.Children.Add(new TextBlock
+                {
+                    Text = dia.ToString(),
+                    FontWeight = isHoje ? FontWeights.Bold : FontWeights.Normal,
+                    FontSize = 12,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Foreground = new SolidColorBrush(isPast ? Color.FromRgb(156, 163, 175) : Color.FromRgb(17, 24, 39))
+                });
+
+                if (slotsDia.Count > 0)
+                {
+                    stackDia.Children.Add(new TextBlock
                     {
-                        Gatilhos.Clear();
-                        foreach (var item in list) Gatilhos.Add(item);
-                    }
+                        Text = $"{disponiveis}✓ {agendados}●",
+                        FontSize = 9,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128)),
+                        Margin = new Thickness(0, 2, 0, 0)
+                    });
                 }
-            }
-            catch (Exception ex)
-            {
-                AddLog("Erro ao carregar gatilhos: " + ex.Message);
-            }
-        }
 
-        private void RemoveTrigger_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button btn && btn.DataContext is GatilhoModel gatilho)
-            {
-                var result = MessageBox.Show($"Deseja realmente excluir o gatilho '{gatilho.Comando}'?", "Confirmar Exclusão", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (result == MessageBoxResult.Yes)
+                cardDia.Child = stackDia;
+
+                if (!isPast)
                 {
-                    Gatilhos.Remove(gatilho);
-                    SaveTriggers();
+                    cardDia.MouseLeftButtonUp += (s, e) => AbrirSlotsDia((DateTime)((Border)s!).Tag);
                 }
+
+                CalendarioGrid.Children.Add(cardDia);
             }
         }
 
-        // --- CHAMADOS ---
-        private void ResolveTicket_Click(object sender, RoutedEventArgs e)
+        private void AbrirSlotsDia(DateTime data)
         {
-            if (sender is Button btn && btn.DataContext is ChamadoModel chamado)
+            var win = new Views.SlotsDiaWindow(data, _databaseService);
+            win.Owner = this;
+            if (win.ShowDialog() == true) RenderizarCalendario();
+        }
+
+        private void BtnMesAnterior_Click(object sender, RoutedEventArgs e)
+        {
+            _mesAtual = _mesAtual.AddMonths(-1);
+            RenderizarCalendario();
+        }
+
+        private void BtnProximoMes_Click(object sender, RoutedEventArgs e)
+        {
+            _mesAtual = _mesAtual.AddMonths(1);
+            RenderizarCalendario();
+        }
+
+        private void ReconectarWA_Click(object sender, RoutedEventArgs e)
+        {
+            string instancia = _databaseService.ObterConfiguracao("evo_instance", "");
+
+            if (string.IsNullOrEmpty(instancia))
             {
-                ChamadosAbertos.Remove(chamado);
+                MessageBox.Show("Instância não configurada. Faça logout e entre novamente.");
+                return;
+            }
+
+            var qrWin = new QrCodeWindow(instancia);
+            qrWin.Owner = this;
+
+            if (qrWin.ShowDialog() == true)
+            {
+                _whatsappService.SetConectado(true);
+                StatusLabel.Text = "✅ WhatsApp Conectado";
+                StartBtn.Content = "BOT LIGADO";
+                StartBtn.Background = (Brush)FindResource("SuccessGreen");
+                AddLog("WhatsApp reconectado com sucesso.");
             }
         }
 
-        protected override void OnClosed(EventArgs e)
+        private void ClearSession_Click(object sender, RoutedEventArgs e) => MessageBox.Show("Use o painel da Evolution API para gerenciar sessões.");
+        protected override void OnClosed(EventArgs e) { _bulkCts?.Cancel(); _webhookServer?.Parar(); _whatsappService?.Fechar(); base.OnClosed(e); }
+    }
+
+    // --- Conversores de Status para Tickets ---
+
+    public class BooleanToStatusBrushConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
         {
-            _cancellationTokenSource?.Cancel();
-            _whatsappService.Fechar();
-            base.OnClosed(e);
+            if (value is bool respondido && respondido)
+                return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D1FAE5")); // Verde claro
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FEF3C7")); // Amarelo claro
         }
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotImplementedException();
+    }
+
+    public class BooleanToStatusTextConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return (value is bool respondido && respondido) ? "Respondido" : "Aguardando";
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotImplementedException();
+    }
+
+    public class BooleanToStatusForegroundConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            if (value is bool respondido && respondido)
+                return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#065F46")); // Verde escuro
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#92400E")); // Amarelo escuro
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotImplementedException();
     }
 }

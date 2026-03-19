@@ -8,5 +8,7 @@ namespace BotWhatsappCSharp.Models
         public string Nome { get; set; } = "Cliente";
         public string UltimaMensagem { get; set; } = string.Empty;
         public DateTime Horario { get; set; } = DateTime.Now;
+        public string HistoricoResumido { get; set; } = "";
+        public bool Respondido { get; set; } = false;
     }
 }

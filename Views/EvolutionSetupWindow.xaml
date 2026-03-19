@@ -1,0 +1,34 @@
+<Window x:Class="BotWhatsappCSharp.Views.EvolutionSetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Configurar Evolution API" Height="400" Width="450"
+        WindowStartupLocation="CenterScreen" Background="#F3F4F6">
+    <Grid Margin="30">
+        <StackPanel>
+            <TextBlock Text="Configurações Evolution API" FontSize="20" FontWeight="Bold" Margin="0,0,0,5"/>
+            <TextBlock Text="Aponte para sua VPS rodando Evolution API." FontSize="12" Foreground="Gray" Margin="0,0,0,20"/>
+
+            <TextBlock Text="URL da VPS (Base URL)" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="TxtBaseUrl" Padding="8" Margin="0,0,0,15" Text="http://sua-vps-ip:8080"/>
+
+            <TextBlock Text="API Key Global" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="TxtApiKey" Padding="8" Margin="0,0,0,15"/>
+
+            <TextBlock Text="Nome da Instância" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="TxtInstance" Padding="8" Margin="0,0,0,15" Text="botzap"/>
+
+            <TextBlock Text="Porta do Webhook Local (Recebimento)" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="TxtWebhookPort" Padding="8" Margin="0,0,0,20" Text="3001"/>
+
+            <Button Content="SALVAR E RECONECTAR" Click="Salvar_Click" Height="45" Background="#2563EB" Foreground="White" FontWeight="Bold">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="8"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            
+            <TextBlock x:Name="StatusLabel" Text="" Foreground="#DC2626" Margin="0,10,0,0" HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -18,4 +18,12 @@ namespace BotWhatsappCSharp.Models
         public TimeSpan HoraInicio { get; set; }
         public TimeSpan HoraFim { get; set; }
     }
+
+    public class SlotConfigurado
+    {
+        public DateTime DataHora { get; set; }
+        public bool Disponivel { get; set; } = true;
+        public string AgendadoPor { get; set; } = "";
+        public string TelefoneCliente { get; set; } = "";
+    }
 }

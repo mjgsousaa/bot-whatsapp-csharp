@@ -1,0 +1,95 @@
+<Window x:Class="BotWhatsappCSharp.Views.QrCodeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Conectar WhatsApp — BotZap AI" 
+        Height="560" Width="440" 
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="White">
+    <Grid Margin="30">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="16"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="16"/>
+            <RowDefinition Height="200"/>
+            <RowDefinition Height="16"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Conecte seu WhatsApp"
+                   FontSize="22" FontWeight="Bold"
+                   HorizontalAlignment="Center"
+                   Foreground="#111827"/>
+
+        <TextBlock Grid.Row="2" TextWrapping="Wrap"
+                   TextAlignment="Center" FontSize="14"
+                   Foreground="#6B7280"
+                   Text="Abra o WhatsApp no celular → ⋮ Menu → Aparelhos conectados → Conectar aparelho → Aponte a câmera para o QR Code abaixo"/>
+
+        <!-- QR Code Image -->
+        <Border Grid.Row="4"
+                Width="200" Height="200"
+                HorizontalAlignment="Center"
+                BorderBrush="#E5E7EB" BorderThickness="1"
+                CornerRadius="8">
+            <Grid>
+                <!-- Loading -->
+                <StackPanel x:Name="PnlLoading"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Center">
+                    <TextBlock Text="⏳" FontSize="32"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Gerando QR Code..."
+                               FontSize="12" Foreground="#9CA3AF"
+                               Margin="0,8,0,0"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- QR Code real -->
+                <Image x:Name="ImgQrCode"
+                       Stretch="Uniform"
+                       Visibility="Collapsed"
+                       Margin="8"/>
+            </Grid>
+        </Border>
+
+        <!-- Status -->
+        <StackPanel Grid.Row="6" 
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Center">
+            <Ellipse x:Name="StatusDot"
+                     Width="10" Height="10"
+                     Fill="#9CA3AF" Margin="0,0,8,0"
+                     VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtStatus"
+                       FontSize="14" Foreground="#6B7280"
+                       VerticalAlignment="Center"
+                       Text="Aguardando QR Code..."/>
+        </StackPanel>
+
+        <!-- Botão cancelar -->
+        <Button Grid.Row="8"
+                Content="Cancelar"
+                x:Name="BtnCancelar"
+                Click="BtnCancelar_Click"
+                Height="38" Background="Transparent"
+                BorderBrush="#E5E7EB" BorderThickness="1"
+                Foreground="#6B7280">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Button.Template>
+        </Button>
+    </Grid>
+</Window>
