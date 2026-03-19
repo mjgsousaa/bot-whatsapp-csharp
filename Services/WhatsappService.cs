@@ -306,7 +306,9 @@ namespace BotWhatsappCSharp.Services
 
         private string LimparNumero(string numero)
         {
-            string num = new string(numero.Where(char.IsDigit).ToArray());
+            if (string.IsNullOrEmpty(numero)) return "";
+            string num = numero.Split('@')[0];
+            num = new string(num.Where(char.IsDigit).ToArray());
             if (num.Length <= 11 && !num.StartsWith("55")) num = "55" + num;
             return num;
         }

@@ -46,7 +46,7 @@ namespace BotWhatsappCSharp.Services
                 model = "llama-3.3-70b-versatile",
                 messages = messages.ToArray(),
                 temperature = 0.85,
-                max_tokens = 512
+                max_tokens = 1024
             };
 
             string json = JsonSerializer.Serialize(requestBody);
@@ -65,8 +65,14 @@ namespace BotWhatsappCSharp.Services
 
             string responseString = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseString);
-            string? respostaIA = doc.RootElement
-                .GetProperty("choices")[0]
+            
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+            {
+                Logger.Error($"Groq API retornou resposta sem choices: {responseString}");
+                return "Desculpe, não consegui processar sua mensagem agora.";
+            }
+
+            string? respostaIA = choices[0]
                 .GetProperty("message")
                 .GetProperty("content")
                 .GetString();

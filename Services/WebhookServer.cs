@@ -85,8 +85,9 @@ namespace BotWhatsappCSharp.Services
                 if (!root.TryGetProperty("event", out var evtEl)) return;
                 string? evt = evtEl.GetString();
                 
-                // Suporta "messages.upsert" (v1) e "MESSAGES_UPSERT" (v2)
-                if (evt?.ToLower() != "messages.upsert" && evt?.ToLower() != "message") return;
+                // Suporta "messages.upsert" (v1), "MESSAGES_UPSERT" (v2) e "message"
+                string evtLower = evt?.ToLower() ?? "";
+                if (evtLower != "messages.upsert" && evtLower != "messages_upsert" && evtLower != "message") return;
                 
                 if (!root.TryGetProperty("data", out var data)) return;
 
@@ -127,10 +128,11 @@ namespace BotWhatsappCSharp.Services
                 {
                     if (msg.TryGetProperty("conversation", out var conv))
                         texto = conv.GetString() ?? "";
-                    else if (msg.TryGetProperty("extendedTextMessage", out var ext) && ext.TryGetProperty("text", out var extText))
-                        texto = extText.GetString() ?? "";
-                    else if (msg.TryGetProperty("extendedTextMessage", out var ext2) && ext2.TryGetProperty("conversation", out var extConv))
-                        texto = extConv.GetString() ?? "";
+                    else if (msg.TryGetProperty("extendedTextMessage", out var ext))
+                    {
+                        if (ext.TryGetProperty("text", out var extText)) texto = extText.GetString() ?? "";
+                        else if (ext.TryGetProperty("conversation", out var extConv)) texto = extConv.GetString() ?? "";
+                    }
                     else if (msg.TryGetProperty("audioMessage", out var audio) || msg.TryGetProperty("pttMessage", out var ptt))
                     {
                         if (messageElement.TryGetProperty("message", out var msgA) && 

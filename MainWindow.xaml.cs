@@ -110,6 +110,7 @@ namespace BotWhatsappCSharp
 
                         string msgLimpa = mensagemRecebida.Trim().ToLower();
                         var gatilho = Gatilhos.FirstOrDefault(g => {
+                            if (string.IsNullOrEmpty(g.Comando)) return false;
                             string cmd = g.Comando.Trim().ToLower();
                             if (cmd.StartsWith("/")) {
                                 // Comandos com barra: correspondência exata ou início (ex: /ajuda agora)
@@ -142,7 +143,18 @@ namespace BotWhatsappCSharp
 
                         AddLog($"[IA] Sem gatilho para: '{msgLimpa}'. Enviando para Groq...");
 
-                        if (_aiAssistant == null) return ("", "");
+                        if (_aiAssistant == null)
+                        {
+                            var settings = _databaseService.CarregarSettings();
+                            if (!string.IsNullOrEmpty(settings.ApiKey))
+                                _aiAssistant = new AiAssistant(settings.ApiKey, settings.SystemPrompt, _databaseService);
+                        }
+
+                        if (_aiAssistant == null)
+                        {
+                            AddLog("[ERRO] AI Assistant não inicializado. Verifique a chave da Groq.");
+                            return ("Desculpe, estou com um problema técnico agora.", "");
+                        }
 
                         string aiContext = "";
                         if (c == "AGENDAMENTO_TRIGGER")
